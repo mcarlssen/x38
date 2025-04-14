@@ -762,8 +762,7 @@ input, select, textarea {
 
 	.tiles article {
 		position: relative;
-		width: 27%;
-		height: 27%;
+		width: calc(33.33333% - 1.67em);
 		margin: 0;
 		overflow: hidden;
 	}
