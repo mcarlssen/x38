@@ -148,10 +148,12 @@ const ProjectAccordion = () => {
           summary: 'An early-warning app for noisy aircraft.',
           description: (
             <>
-              <p className="valueprop"><b>Value prop:</b> by alerting of potential interruptions from nearby aircraft, audio teams can reduce burned takes, lost time, and wasted effort, keeping productions on target and helping actors stay in the zone.</p>
-              <p className="problem">When recording audio on location or in non-soundproof environments, it's common for aircraft to intrude unexpectedly, introducing unwanted noise. This is especially easy to happen in areas where terrain or nearby buildings can make it difficult to predict flight paths. This can be especially frustrating for actors, who expend valuable energy only to be forced to "go again" due to circumstances beyond their control. </p>
-              <p className="solution">Heimeyra uses ADS-B flight tracking data to identify aircraft within a specified radius of the user's location. The intuitive "traffic light" indicator provides instant at-a-glance awareness of any nearby aircraft in real-time, giving production an unprecedented ability to squeeze in "one more quick take" before the next buzz.</p>
-              <p><a href="https://heimeyra.app" target="_blank" rel="noopener noreferrer">https://heimeyra.app</a><br/><span className="builtwith">Built with React Native and Node.js, deployed on Vercel.</span></p>
+              <p className="valueprop"><b>VALUE PROP:</b> using Heimeyra to track potential interruptions from nearby aircraft, audio teams can reduce burned takes, lost time, and wasted effort, keeping productions on target and helping actors stay in the zone.</p>
+              <p className="problem">PROBLEM: When recording audio on location or in non-soundproof environments, it's common for aircraft to intrude unexpectedly, introducing unwanted noise. This is especially easy to happen in areas where terrain or nearby buildings can make it difficult to predict flight paths. This can be especially frustrating for actors, who expend valuable energy only to be forced to "go again" due to circumstances beyond their control. </p>
+              <p className="solution">SOLUTION: Heimeyra uses ADS-B flight tracking data to identify aircraft within a specified radius of the user's location. The intuitive "traffic light" indicator provides instant at-a-glance awareness of any nearby aircraft in real-time, giving production an unprecedented ability to squeeze in "one more quick take" before the next buzz.</p>
+              <p className="product-image"><img src="/images/heimeyra.webp" alt="Heimeyra" /></p>
+              <p className="project-link"><a href="https://heimeyra.app" target="_blank" rel="noopener noreferrer">https://heimeyra.app</a>
+                <br/><span className="builtwith">Built with React Native, Node.js, vanilla CSS, and REST API, deployed on Vercel.</span></p>
             </>
           ),
           featureIcon: (
@@ -165,8 +167,12 @@ const ProjectAccordion = () => {
           summary: 'A project-file diff tool for Reaper DAW.',
           description: (
             <>
-            <p>Identifies changes between files, reducing human error and saving sanity! This tool helps audio engineers track changes in their project files and collaborate more effectively.</p>
-            <p><a href="https://reaperdiff.com" target="_blank" rel="noopener noreferrer">https://reaperdiff.com</a></p>
+            <p className="valueprop"><b>VALUE PROP:</b> by comparing raw project files between revisions, audio editors can get visual confirmation of changes, reduce opportunity for error, and shorten time to delivery by avoiding time-consuming re-exports.</p>
+            <p className="problem">PROBLEM: Podcast and audiobook editors making changes to long timelines often risk unintentionally modifying sections or clips that should not be changed, especially with ripple-edits. Traditionally, the only way to catch these errors is by listening to the entire project after every revision, which is time-consuming (and mind-numbing!), and introduces repetitive fatigue.</p>
+            <p className="solution">SOLUTION: ReaperDiff analyzes the raw code of the .RPP project file, and easily calculates all changes between project versions. Using 5 algorithms to check for different types of changes, ReaperDiff generates an easy-to-read, visual representation of the revised project timeline, allowing the editor to confirm at a glance whether unexpected changes have occurred <i>before</i> a time-consuming export is done.</p>
+            <p className="product-image"><img src="/images/reaperdiff.webp" alt="ReaperDiff" /></p>
+            <p><a href="https://reaperdiff.app" target="_blank" rel="noopener noreferrer">https://reaperdiff.app</a><br/>
+            <span className="builtwith">Built with React and vanilla CSS, deployed on Vercel.</span></p>
             </>
           ),
           featureIcon: (
@@ -180,8 +186,12 @@ const ProjectAccordion = () => {
           summary: 'A kid-friendly 12-hour forecast.',
           description: (
             <>
-            <p>Features relatable, understandable weather descriptions. Built with React and OpenWeather API, this app makes weather forecasts fun and accessible for children.</p>
-            <p><a href="https://8bitweather.app" target="_blank" rel="noopener noreferrer">https://8bitweather.app</a></p>
+            <p className="valueprop"><b>VALUE PROP:</b> kids can gain weather awareness and be more self-reliant by learning how to contextualize weather data with tangible, relatable descriptions.</p>
+            <p className="problem">PROBLEM: weather data is often presented in a way that is difficult for children to understand. What does "fahrenheit" mean? How can "zero degrees" exist? Is 20mph wind a lot? These are values we contextualize as adults, but kids struggle to relate to.</p>
+            <p className="solution">SOLUTION: 8-Bit Weather tells kids what the weather is like by describing it in relatable terms: "It's good kite-flying weather," or "super rainy today," or "really hot today - drink lots of water!" As kids become more familiar with weather patterns, the app shows them comparisons-over-time and hourly graphs to help them understand changing conditions.</p>
+            <p className="product-image"><img src="/images/8bitweather.webp" alt="8-Bit Weather"/></p>
+            <p><a href="https://8bitweather.app" target="_blank"  rel="noopener noreferrer">https://8bitweather.app</a><br/>
+            <span className="builtwith">Built with React, vanilla CSS, and OpenWeather API, deployed on Vercel.</span></p>
             </>
           ),
           featureIcon: (
