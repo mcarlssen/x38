@@ -221,9 +221,34 @@ h6 {
 .project-description {
   padding: 0.5rem;
   padding-left: 2.5rem;
-  font-size: .9em;
-  line-height: 1.6;
+  font-size: .8em;
   overflow: hidden;
+  margin-bottom: 1.5rem;
+}
+
+.project-description p {
+  margin: 0.5rem 0 !important;
+  padding: 0 2rem;
+}
+
+.project-description .valueprop {
+  font-size: .8rem;
+  font-weight: 600;
+  color: #006635
+}
+
+.project-description .problem {
+  color: #770050
+}
+
+.project-description .solution {
+  color: #003066
+}
+
+.project-description .builtwith {
+  font-style: italic;
+  font-size: .7rem;
+  color: #5f5f5f;
 }
 
 .description-content {
@@ -234,6 +259,47 @@ h6 {
 
 .description-content p {
   margin: 0;
+  position: relative;
+  padding-left: 2.5rem;
+  line-height: 1.6;
+}
+
+.description-content p::before {
+  position: absolute;
+  left: 0;
+  top: 0.5em;
+  font-size: 1.5em;
+  line-height: 1;
+  transform: translateY(-0.1em);
+}
+
+/* Value prop icon */
+.description-content p.valueprop::before {
+  content: "💡";
+}
+
+/* Problem icon */
+.description-content p.problem::before {
+  content: "⚠️";
+}
+
+/* Solution icon */
+.description-content p.solution::before {
+  content: "✨";
+}
+
+/* Link icon */
+.description-content p:has(a)::before {
+  content: "🔗";
+}
+
+/* Adjust spacing for the first line */
+.description-content p::first-line {
+  padding-left: 0;
+}
+
+.description-content p:last-child {
+  margin-bottom: 0 !important;
 }
 
 .description-content a {

@@ -148,8 +148,10 @@ const ProjectAccordion = () => {
           summary: 'An early-warning app for noisy aircraft.',
           description: (
             <>
-              <p>Reduces burned takes, wasted time & effort, and keeps actors happy. Built with React Native and Node.js, this app monitors local air traffic and provides real-time notifications to film crews.</p>
-              <p><a href="https://heimeyra.app" target="_blank" rel="noopener noreferrer">https://heimeyra.app</a></p>
+              <p className="valueprop"><b>Value prop:</b> by alerting of potential interruptions from nearby aircraft, audio teams can reduce burned takes, lost time, and wasted effort, keeping productions on target and helping actors stay in the zone.</p>
+              <p className="problem">When recording audio on location or in non-soundproof environments, it's common for aircraft to intrude unexpectedly, introducing unwanted noise. This is especially easy to happen in areas where terrain or nearby buildings can make it difficult to predict flight paths. This can be especially frustrating for actors, who expend valuable energy only to be forced to "go again" due to circumstances beyond their control. </p>
+              <p className="solution">Heimeyra uses ADS-B flight tracking data to identify aircraft within a specified radius of the user's location. The intuitive "traffic light" indicator provides instant at-a-glance awareness of any nearby aircraft in real-time, giving production an unprecedented ability to squeeze in "one more quick take" before the next buzz.</p>
+              <p><a href="https://heimeyra.app" target="_blank" rel="noopener noreferrer">https://heimeyra.app</a><br/><span className="builtwith">Built with React Native and Node.js, deployed on Vercel.</span></p>
             </>
           ),
           featureIcon: (
