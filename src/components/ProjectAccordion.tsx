@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { PlusSquare, CheckCircle, ListPlus } from '@phosphor-icons/react'
+import { PlusSquare, CheckCircle } from '@phosphor-icons/react'
 import React, { ReactElement, SVGProps } from 'react'
 
 interface SVGIconProps extends SVGProps<SVGSVGElement> {
