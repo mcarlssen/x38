@@ -1,8 +1,24 @@
-import { Code } from '@phosphor-icons/react'
+import { Code, FilePdf, GithubLogo, ThreadsLogo, Bookmark, LinkedinLogo } from '@phosphor-icons/react'
 import ProjectAccordion from './components/ProjectAccordion'
 import TypeWriter from './components/TypeWriter'
+import { useRef } from 'react'
 
 function App() {
+  const footerRef = useRef<HTMLDivElement>(null)
+
+  const handleNameClick = () => {
+    // Scroll to footer
+    footerRef.current?.scrollIntoView({ behavior: 'smooth' })
+
+    // Add flash animation class
+    if (footerRef.current) {
+      footerRef.current.classList.remove('footer-flash')
+      // Force a reflow to restart the animation
+      void footerRef.current.offsetWidth
+      footerRef.current.classList.add('footer-flash')
+    }
+  }
+
   const phrases = [
     "quality of life",
     "technical support",
@@ -17,7 +33,9 @@ function App() {
         <div className="container">
           <div className="header-content fade-in-down">
             <Code size={30} weight="fill" className="header-icon" />
-            <span className="header-title">Mike Thorn</span>
+            <span className="header-title" onClick={handleNameClick} style={{ cursor: 'pointer' }}>
+              Mike Thorn
+            </span>
           </div>
         </div>
       </header>
@@ -35,35 +53,48 @@ function App() {
         <ProjectAccordion />
       </main>
 
-      <footer className="footer">
-        <div className="container">
-          <div className="footer-content">
+      <footer id="footer" >
+        <div className="container" >
+          <div className="footer-content footer" ref={footerRef}>
             <section className="footer-section">
-              <h2 className="footer-header">Get in touch</h2>
+              <h2 className="footer-header">GET IN TOUCH</h2>
               <p className="email">m@x38.dev</p>
             </section>
             <section className="footer-section">
-              <h2 className="footer-header">Follow</h2>
+              <h2 className="footer-header">PEEK MY SOCIALS</h2>
               <ul className="footer-icons">
                 <li>
                   <a href="https://github.com/mcarlssen" className="icon-link">
-                    <i className="ph-fill ph-github-logo"></i>
+                    <GithubLogo size={24} weight="fill" />
                     <span className="label">GitHub</span>
                   </a>
                 </li>
                 <li>
                   <a href="https://threads.net/magnuscarlssen" className="icon-link">
-                    <i className="ph-fill ph-threads-logo"></i>
+                    <ThreadsLogo size={24} weight="fill" />
                     <span className="label">Threads</span>
                   </a>
                 </li>
                 <li>
                   <a href="https://magnuscarlssen.substack.com" className="icon-link">
-                    <i className="ph-fill ph-bookmark"></i>
+                    <Bookmark size={24} weight="fill" />
                     <span className="label">Substack</span>
                   </a>
                 </li>
+                <li>
+                  <a href="https://linkedin.com/in/mikethorn" className="icon-link">
+                    <LinkedinLogo size={24} weight="fill" />
+                    <span className="label">LinkedIn</span>
+                  </a>
+                </li>
               </ul>
+            </section>
+            <section className="footer-section">
+              <h2 className="footer-header">VIEW RESUME</h2>
+              <a href="/assets/Mike-Thorn-Resume-2025-04.pdf" className="icon-link resume-link" target="_blank" rel="noopener noreferrer">
+                <FilePdf size={24} weight="fill" />
+                <span className="email">pdf</span>
+              </a>
             </section>
           </div>
           <div className="footer-copyright">
