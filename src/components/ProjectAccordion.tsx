@@ -187,11 +187,11 @@ const ProjectAccordion = () => {
           description: (
             <>
             <p className="valueprop"><b>VALUE PROP:</b> kids can gain weather awareness and be more self-reliant by learning how to contextualize weather data with tangible, relatable descriptions.</p>
-            <p className="problem">PROBLEM: weather data is often presented in a way that is difficult for children to understand. What does "fahrenheit" mean? How can "zero degrees" exist? Is 20mph wind a lot? These are values we contextualize as adults, but kids struggle to relate to.</p>
+            <p className="problem">PROBLEM: weather data is often presented in a way that is difficult for children to understand. What does "fahrenheit" mean? How can "zero degrees" exist? Is 20mph wind a lot? These are values we easily contextualize as adults, but kids struggle to relate to.</p>
             <p className="solution">SOLUTION: 8-Bit Weather tells kids what the weather is like by describing it in relatable terms: "It's good kite-flying weather," or "super rainy today," or "really hot today - drink lots of water!" As kids become more familiar with weather patterns, the app shows them comparisons-over-time and hourly graphs to help them understand changing conditions.</p>
             <p className="product-image"><img src="/images/8bitweather.webp" alt="8-Bit Weather"/></p>
             <p><a href="https://8bitweather.app" target="_blank"  rel="noopener noreferrer">https://8bitweather.app</a><br/>
-            <span className="builtwith">Built with React, vanilla CSS, and OpenWeather API, deployed on Vercel.</span></p>
+            <span className="builtwith">Built with React, Node.js,vanilla CSS, and OpenWeather API, deployed on Vercel.</span></p>
             </>
           ),
           featureIcon: (
@@ -206,12 +206,53 @@ const ProjectAccordion = () => {
       title: "force multipliers:",
       items: [
         {
-          title: 'Whisper Transcription',
-          summary: 'A terminal utility that wraps OpenAI\'s transcription engine.',
+          title: 'SSRS CSV Subscription Importer',
+          summary: 'Create report subscriptions in bulk from a CSV file.',
           description: (
             <>
-              <p>Fast, easy, and free transcription on any PC.</p>
-              <p><a href="https://github.com/mcarlssen/code" target="_blank" rel="noopener noreferrer">https://github.com/mcarlssen/code</a></p>
+              <p className="valueprop"><b>VALUE PROP:</b> Cut report subscription creation time to a fraction of the time to do manually, without losing any subscription features or capabilities. The only free subscription import tool for SSRS in existence?</p>
+              <p className="problem">PROBLEM: Creating report subscriptions directly in SSRS is a click-intensive process and highly susceptible to human error. The SSRS interface is not designed for bulk operations, and any more than a handful of subscriptions offers a high upside for automation.</p>
+              <p className="solution">SOLUTION: This CSV Importer tool enables bulk creation from a simple, easy-to-create CSV file, retaining all the native subscription features and capabilities (including scheduling!), and processes many dozens of subscriptions in the same time a person could add just one.</p>
+              <p><a href="https://github.com/mcarlssen/code" target="_blank" rel="noopener noreferrer">https://github.com/mcarlssen/code</a><br/>
+              <span className="builtwith">Built with Powershell, SSRS Web Service Proxy, and Excel.</span></p>
+            </>
+          ),
+          featureIcon: (
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" className="feature-icon">
+              <path fill="currentColor" d="M224 128a8 8 0 0 1-8 8h-80a8 8 0 0 1 0-16h80a8 8 0 0 1 8 8ZM136 168h80a8 8 0 0 0 0-16h-80a8 8 0 0 0 0 16Zm80-80h-80a8 8 0 0 0 0 16h80a8 8 0 0 0 0-16ZM96 140H48v-24h48a12 12 0 0 0 0-24H48V68a12 12 0 0 0-24 0v24H12a12 12 0 0 0 0 24h12v24H12a12 12 0 0 0 0 24h36v24a12 12 0 0 0 24 0v-24h24a12 12 0 0 0 0-24Z"/>
+            </svg>
+          )
+        },
+        {
+          title: 'Check-ID3',
+          summary: 'Create report subscriptions in bulk from a CSV file.',
+          description: (
+            <>
+              <p className="valueprop"><b>VALUE PROP:</b> Music & audiobook producers, podcast editors, and archivists can programmatically verify that specified ID3 tags are present and set correctly in MP3 files, ensuring perfect consistency and accuracy.</p>
+              <p className="problem">PROBLEM: Validating ID3 tags across a large number of files is laborious and time-consuming, even with exceptional tools like <a href="https://www.mp3tag.de/en/" target="_blank" rel="noopener noreferrer">mp3tag</a>. Scale the problem by 100 files, and the possibility of human error is increased.</p>
+              <p className="solution">SOLUTION: Check-ID3 takes a list of tags and values via CSV (or TSV), and tests every MP3 file in the active directory against the tag list. A report is generated with the results, and can be easily re-run after corrections are made manually (using mp3tag or similar).</p>
+              <p className="product-image"><img src="/images/check-id3.webp" alt="Check-ID3"/></p>
+              <p><a href="https://github.com/mcarlssen/check-id3" target="_blank" rel="noopener noreferrer">https://github.com/mcarlssen/check-id3</a><br/>
+              <span className="builtwith">Built with Python and Powershell.</span></p>
+            </>
+          ),
+          featureIcon: (
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" className="feature-icon">
+              <path fill="currentColor" d="M208,32H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32ZM64,72H192a8,8,0,0,1,0,16H64a8,8,0,0,1,0-16Zm0,48H96a8,8,0,0,1,0,16H64a8,8,0,0,1,0-16Zm40,64H64a8,8,0,0,1,0-16h40a8,8,0,0,1,0,16Zm94.55-40.71L180.69,158l5.44,22a4,4,0,0,1-1.49,4.17,4.05,4.05,0,0,1-2.39.79,4,4,0,0,1-2-.55L160,172.54l-20.22,11.91a4,4,0,0,1-5.91-4.41l5.44-22-17.86-14.75a4,4,0,0,1,2.24-7.07l23.58-1.82,9.06-21a4,4,0,0,1,7.34,0l9.06,21,23.58,1.82a4,4,0,0,1,2.24,7.07Z"/>
+            </svg>
+          )
+        },
+         {
+          title: 'Whisper Transcription',
+          summary: 'A terminal utility that wraps OpenAI\'s Whisper.cpp speech-to-text engine.',
+          description: (
+            <>
+              <p className="valueprop"><b>VALUE PROP:</b> Fast, easy, and free transcription on any PC.</p>
+              <p className="problem">PROBLEM: Transcribing lots of small audio files <i>by hand</i> is tedious, at best. Using browser-based transcription services adds many steps to the process. Many desktop apps require subscriptions or are time-limited.</p>
+              <p className="solution">SOLUTION: Whisper Transcription is a lightweight, simple terminal utility that wraps OpenAI's Whisper.cpp speech-to-text engine, allowing users to transcribe audio files locally on any PC faster than realtime, with high accuracy and minimal touches. Shortcuts like automatic copy-to-clipboard make the utility easy to integrate with existing processes.</p>
+              <p className="product-image"><img src="/images/whisper.webp" alt="Whisper Transcription"/></p>
+              <p><a href="https://github.com/mcarlssen/code" target="_blank" rel="noopener noreferrer">https://github.com/mcarlssen/code</a><br/>
+              <span className="builtwith">Built with Powershell, Whisper.cpp, and <a href="https://ggml.ggerganov.com/" target="_blank" rel="noopener noreferrer">@ggerganov's ggml models</a>.</span></p>
             </>
           ),
           featureIcon: (
@@ -225,8 +266,11 @@ const ProjectAccordion = () => {
           summary: 'Batch-print labels via a simple terminal script.',
           description: (
             <>
-              <p>Enabling 10x faster label printing.</p>
-              <p><a href="https://github.com/mcarlssen/code" target="_blank" rel="noopener noreferrer">https://github.com/mcarlssen/code</a></p>
+              <p className="valueprop"><b>VALUE PROP:</b> Print large numbers of individually unique labels 10x faster than manual printing - hands-free.</p>
+              <p className="problem">PROBLEM: We affixed a UID label to hardware devices before deploying them to the field, using a handheld P-Touch label printer. This process was foolproof, but wasted 30% of our label stock due to spool-and-cut, and required individual input for each label - an very inefficient and time-consuming operation.</p>
+              <p className="solution">SOLUTION: P-Touch Batch Label Utility is a simple terminal script that generates a list of labels from copy-and-paste input from the user, and prints all labels on a single strip - saving that 30% previously-wasted stock, and making the entire printing process 10x faster and 10x fewer touches.</p>
+              <p><a href="https://github.com/mcarlssen/code" target="_blank" rel="noopener noreferrer">https://github.com/mcarlssen/code</a><br/>
+              <span className="builtwith">Built with Powershell and Holy Hand Grenade, because label printers are evil.</span></p>
             </>
           ),
           featureIcon: (
@@ -236,27 +280,15 @@ const ProjectAccordion = () => {
           )
         },
         {
-          title: 'SSRS CSV Subscription Importer',
-          summary: 'Create report subscriptions in bulk from a CSV file.',
-          description: (
-            <>
-              <p>The only free CSV import tool for SSRS in existence.</p>
-              <p><a href="https://github.com/mcarlssen/code" target="_blank" rel="noopener noreferrer">https://github.com/mcarlssen/code</a></p>
-            </>
-          ),
-          featureIcon: (
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" className="feature-icon">
-              <path fill="currentColor" d="M224 128a8 8 0 0 1-8 8h-80a8 8 0 0 1 0-16h80a8 8 0 0 1 8 8ZM136 168h80a8 8 0 0 0 0-16h-80a8 8 0 0 0 0 16Zm80-80h-80a8 8 0 0 0 0 16h80a8 8 0 0 0 0-16ZM96 140H48v-24h48a12 12 0 0 0 0-24H48V68a12 12 0 0 0-24 0v24H12a12 12 0 0 0 0 24h12v24H12a12 12 0 0 0 0 24h36v24a12 12 0 0 0 24 0v-24h24a12 12 0 0 0 0-24Z"/>
-            </svg>
-          )
-        },
-        {
           title: 'Blink(1) Busy Light',
           summary: 'Control a Blink(1) LED device via AutoHotKey as a busy light.',
           description: (
             <>
-              <p>Reduces walk-in interruptions.</p>
-              <p><a href="https://github.com/mcarlssen/code" target="_blank" rel="noopener noreferrer">https://github.com/mcarlssen/code</a></p>
+              <p className="valueprop"><b>VALUE PROP:</b> An easily controllable, inexpensive alert light that increases situational awareness for all parties within visual range!</p>
+              <p className="problem">PROBLEM: <i>Tap-tap..."You on the phone?"</i> is an all-too-familiar pantomime, especially in-office. It's awkward, distracting, and indicates a lack of visibility for heads-down concentration or single-focus tasks. Commercial "busy lights" exist, but are generally expensive.</p>
+              <p className="solution">SOLUTION: Using an inexpensive <a href="https://blink1.thingm.com/" target="_blank" rel="noopener noreferrer">Blink(1) USB LED device</a>, this Busy Light utility leverages a simple AutoHotKey macro to toggle the LED on or off with a simple keypress, to visibly indicate that you're not available to talk. AHK also provides powerful custom detection logic, so you can even auto-detect when an app opens or a window is focused. Tell your coworkers - if the light is red, don't interrupt!</p>
+              <p><a href="https://github.com/mcarlssen/code" target="_blank" rel="noopener noreferrer">https://github.com/mcarlssen/code</a><br/>
+              <span className="builtwith">Built with AutoHotKey v2 and the blink(1) command-line tool.</span></p>
             </>
           ),
           featureIcon: (
@@ -271,11 +303,15 @@ const ProjectAccordion = () => {
       title: "transforming processes:",
       items: [
         {
-          title: 'Deployment Streamlining',
+          title: 'Hardware Deployment Streamlining',
           summary: 'Rewriting a core provisioning process yielded a 75% shorter cycle time.',
           description: (
             <>
-              <p>By analyzing and rewriting a core provisioning process, I achieved an 80% reduction in manual touches and cut the cycle time by three quarters.</p>
+              <p className="valueprop"><b>VALUE PROP:</b> I achieved an 80% reduction in manual touches and 75% shorter cycle time by analyzing, refactoring, and extending a business-centric device provisioning process.</p>
+              <p className="problem">PROBLEM: Provisioning new laptops for field technicians took 3-4 hours from unboxing to shipping, and required a dozen manual touches throughout the setup process. This made volume scaling difficult for limited staff resources, and impaired the team's ability to be responsive and agile on short notice.</p>
+              <p className="solution">SOLUTION: I identified many areas of the codified portions of the process that could be automated or directly connected to the following steps, as well as new capabilities that could be added, which resulted in consolidating required input steps from 12 steps to 2 steps, and an overall significantly shortened process. This enabled much more agile turnaround and made same-day service possible much later into the workday.</p>
+              <p><a href="https://renovo1.com" target="_blank" rel="noopener noreferrer">https://renovo1.com</a><br/>
+              <span className="builtwith">Built with Powershell, Ruby, and Chef, deployed on AWS.</span></p>
             </>
           ),
           featureIcon: (
@@ -285,11 +321,15 @@ const ProjectAccordion = () => {
           )
         },
         {
-          title: 'Efficiency Analysis',
-          summary: 'Implemented comprehensive metrics-gathering and identified ways to reduce work by 44%.',
+          title: 'Workflow Efficiency Analysis',
+          summary: 'Implemented comprehensive metrics-gathering and identified ways to reduce work by 68%.',
           description: (
             <>
-              <p>Through careful analysis of workflow patterns and bottlenecks, I identified seven key areas where process improvements could significantly reduce workload.</p>
+              <p className="valueprop"><b>VALUE PROP:</b> By implementing expanded data collection points from the ticketing system, and performing quantiative analysis, I identified 10 key process improvements that could reduce labor overhead by up to 68%.</p>
+              <p className="problem">PROBLEM: A rapid growth in business, combined with a critical and persistent staffing shortage, left the support team oversubscribed and unable to meet target response times, resulting in decreased customer satisfaction and a high-stress working environment. </p>
+              <p className="solution">SOLUTION: By increasing the number and frequency of datapoints being collected, I was able to correlate patterns in customer behavior <i>and</i> pinpoint process bottlenecks for the support team. I identified 10 of the most impactful areas for improvement, which combined to an estimated 68% of overall ticket volume. This data was visualized via Google Sheets dashboard with custom charts and standardized reports, for accessible distribution to leadership.</p>
+              <p><a href="https://guard1.com" target="_blank" rel="noopener noreferrer">https://guard1.com</a><br/>
+              <span className="builtwith">Built with CSV, Google Sheets, AppsScript, and the tears of the support team.</span></p>
             </>
           ),
           featureIcon: (
