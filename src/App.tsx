@@ -91,7 +91,7 @@ function App() {
             </section>
             <section className="footer-section">
               <h2 className="footer-header">VIEW RESUME</h2>
-              <a href="src/assets/Mike-Thorn-Resume-2025-04.pdf" className="icon-link resume-link" target="_blank" rel="noopener noreferrer">
+              <a href="Mike-Thorn-Resume-2025-04.pdf" className="icon-link resume-link" target="_blank" rel="noopener noreferrer">
                 <FilePdf size={24} weight="fill" />
                 <span className="email">pdf</span>
               </a>
