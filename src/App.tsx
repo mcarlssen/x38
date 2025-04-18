@@ -43,7 +43,7 @@ function App() {
       <main className="main container">
         <h1 className="title fade-in-up">
           Engineering <TypeWriter phrases={phrases} className="title-keyword-text" /><br/>
-          <span className="title-highlight">for <span style={{ color: 'var(--color-customers)' }}>customers</span>, <span style={{ color: 'var(--color-teams)' }}>teams</span>, and <span style={{ color: 'var(--color-organizations)' }}>organizations</span>.</span>
+          for <span style={{ color: 'var(--color-customers)' }}>customers</span>, <span style={{ color: 'var(--color-teams)' }}>teams</span>, and <span style={{ color: 'var(--color-organizations)' }}>organizations</span>.
         </h1>
         
         <p className="description fade-in-up delay-200">
