@@ -2,6 +2,7 @@ import { Code, FilePdf, GithubLogo, ThreadsLogo, Bookmark, LinkedinLogo } from '
 import ProjectAccordion from './components/ProjectAccordion'
 import TypeWriter from './components/TypeWriter'
 import { useRef } from 'react'
+import { Analytics } from "@vercel/analytics/react"
 
 function App() {
   const footerRef = useRef<HTMLDivElement>(null)
@@ -102,6 +103,8 @@ function App() {
           </div>
         </div>
       </footer>
+      <Analytics/>
+
     </div>
   )
 }
