@@ -25,7 +25,8 @@ function App() {
     "technical support",
     "data analysis",
     "project management",
-    "process improvement"
+    "process improvement",
+    "fun"
   ];
 
   return (

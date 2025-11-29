@@ -116,10 +116,10 @@ const AccordionItem = ({ item, isOpen, isViewed, onClick }: AccordionItemProps) 
               className="grunge-texture"
               style={{
                 WebkitMaskImage: `url("data:image/svg+xml,${encodeURIComponent(
-                  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${item.featureIcon.props.viewBox}"><path fill="white" d="${item.featureIcon.props.children.props.d}"/></svg>`
+                  `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="${item.featureIcon.props.viewBox}" preserveAspectRatio="xMidYMid meet"><path fill="white" d="${item.featureIcon.props.children.props.d}"/></svg>`
                 )}")`,
                 maskImage: `url("data:image/svg+xml,${encodeURIComponent(
-                  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${item.featureIcon.props.viewBox}"><path fill="white" d="${item.featureIcon.props.children.props.d}"/></svg>`
+                  `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="${item.featureIcon.props.viewBox}" preserveAspectRatio="xMidYMid meet"><path fill="white" d="${item.featureIcon.props.children.props.d}"/></svg>`
                 )}")`,
               } as React.CSSProperties}
             />
@@ -153,7 +153,7 @@ const ProjectAccordion = () => {
               <p className="solution">SOLUTION: Heimeyra uses ADS-B flight tracking data to identify aircraft within a specified radius of the user's location. The intuitive "traffic light" indicator provides instant at-a-glance awareness of any nearby aircraft in real-time, giving production an unprecedented ability to squeeze in "one more quick take" before the next buzz.</p>
               <p className="product-image"><img src="/images/heimeyra.webp" alt="Heimeyra" /></p>
               <p className="project-link"><a href="https://heimeyra.app" target="_blank" rel="noopener noreferrer">https://heimeyra.app</a>
-                <br/><span className="builtwith">Built with React Native, Node.js, vanilla CSS, and REST API, deployed on Vercel.</span></p>
+                <br/><span className="builtwith">Built with React, Node.js, vanilla CSS, and REST API, deployed on Vercel.</span></p>
             </>
           ),
           featureIcon: (
@@ -270,7 +270,7 @@ const ProjectAccordion = () => {
               <p className="problem">PROBLEM: We affixed a UID label to hardware devices before deploying them to the field, using a handheld P-Touch label printer. This process was foolproof, but wasted 30% of our label stock due to spool-and-cut, and required individual input for each label - an very inefficient and time-consuming operation.</p>
               <p className="solution">SOLUTION: P-Touch Batch Label Utility is a simple terminal script that generates a list of labels from copy-and-paste input from the user, and prints all labels on a single strip - saving that 30% previously-wasted stock, and making the entire printing process 10x faster and 10x fewer touches.</p>
               <p><a href="https://github.com/mcarlssen/code" target="_blank" rel="noopener noreferrer">https://github.com/mcarlssen/code</a><br/>
-              <span className="builtwith">Built with Powershell and Holy Hand Grenade, because label printers are evil.</span></p>
+              <span className="builtwith">Built with Powershell and a Holy Hand Grenade, because label printers are evil.</span></p>
             </>
           ),
           featureIcon: (
@@ -335,6 +335,49 @@ const ProjectAccordion = () => {
           featureIcon: (
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512" className="feature-icon">
               <path fill="currentColor" d="M128 0c17.7 0 32 14.3 32 32l0 32 128 0 0-32c0-17.7 14.3-32 32-32s32 14.3 32 32l0 32 48 0c26.5 0 48 21.5 48 48l0 48H0l0-48C0 85.5 21.5 64 48 64l48 0 0-32c0-17.7 14.3-32 32-32zM0 192l448 0 0 272c0 26.5-21.5 48-48 48L48 512c-26.5 0-48-21.5-48-48L0 192zm64 80l0 32c0 8.8 7.2 16 16 16l32 0c8.8 0 16-7.2 16-16l0-32c0-8.8-7.2-16-16-16l-32 0c-8.8 0-16 7.2-16 16zm128 0l0 32c0 8.8 7.2 16 16 16l32 0c8.8 0 16-7.2 16-16l0-32c0-8.8-7.2-16-16-16l-32 0c-8.8 0-16 7.2-16 16zm144-16c-8.8 0-16 7.2-16 16l0 32c0 8.8 7.2 16 16 16l32 0c8.8 0 16-7.2 16-16l0-32c0-8.8-7.2-16-16-16l-32 0zM64 400l0 32c0 8.8 7.2 16 16 16l32 0c8.8 0 16-7.2 16-16l0-32c0-8.8-7.2-16-16-16l-32 0c-8.8 0-16 7.2-16 16zm144-16c-8.8 0-16 7.2-16 16l0 32c0 8.8 7.2 16 16 16l32 0c8.8 0 16-7.2 16-16l0-32c0-8.8-7.2-16-16-16l-32 0zm112 16l0 32c0 8.8 7.2 16 16 16l32 0c8.8 0 16-7.2 16-16l0-32c0-8.8-7.2-16-16-16l-32 0c-8.8 0-16 7.2-16 16z"/>
+            </svg>
+          )
+        }
+      ]
+    },
+    {
+      title: "Creative Exploration:",
+      items: [
+        {
+          title: 'Kringla',
+          summary: 'A harmonograph simulator inspired by mechanical drawing machines.',
+          description: (
+            <>
+              <p className="valueprop"><b>VALUE PROP:</b> Analog drawing machines have an inexplicable allure for me in the 2020s. It's the "retro-ness" of physical ink on physical paper, and the left-brained intersection of physics and geometry with right-brained creativity and intuition.</p>
+              <p className="problem">PROBLEM: Physical harmonograph devices are complex and require careful engineering to build successfully. It's no accident that James Gandy (<a href="https://instagram.com/gandyworks">@gandyworks</a>) has a machinist background. There's a direct relationship between the complexity of your machine, and the complexity of the patterns and shapes you can achieve. This takes time and resources.</p>
+              <p className="solution">SOLUTION: Using a "keyframe" system, Kringla allows the user to create evolving patterns similar to eccentric gears and multi-stage gear trains.</p>
+              <p className="product-image"><img src="/images/kringla.webp" alt="Kringla" /></p>
+              <p className="project-link"><a href="https://kringla.app" target="_blank" rel="noopener noreferrer">https://kringla.app</a>
+                <br/><span className="builtwith">Built with React, Framer, Node.js, vanilla CSS, deployed on Vercel.</span></p>
+            </>
+          ),
+          featureIcon: (
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" className="feature-icon">
+              <path fill="currentColor" d="M248,144a8,8,0,0,1-16,0,96.11,96.11,0,0,0-96-96,88.1,88.1,0,0,0-88,88,80.09,80.09,0,0,0,80,80,72.08,72.08,0,0,0,72-72,64.07,64.07,0,0,0-64-64,56.06,56.06,0,0,0-56,56,48.05,48.05,0,0,0,48,48,40,40,0,0,0,40-40,32,32,0,0,0-32-32,24,24,0,0,0-24,24,16,16,0,0,0,16,16,8,8,0,0,0,8-8,8,8,0,0,1,0-16,16,16,0,0,1,16,16,24,24,0,0,1-24,24,32,32,0,0,1-32-32,40,40,0,0,1,40-40,48.05,48.05,0,0,1,48,48,56.06,56.06,0,0,1-56,56,64.07,64.07,0,0,1-64-64,72.08,72.08,0,0,1,72-72,80.09,80.09,0,0,1,80,80,88.1,88.1,0,0,1-88,88,96.11,96.11,0,0,1-96-96A104.11,104.11,0,0,1,136,32,112.12,112.12,0,0,1,248,144Z"></path>
+            </svg>
+          )
+        },
+        {
+          title: 'Looplet',
+          summary: 'Spirographs on steroids...with blend modes',
+          description: (
+            <>
+              <p className="valueprop"><b>VALUE PROP:</b> Spirograph drawings are geometrically complex, but require physical devices to create. What if we could create these drawings digitally, with the same kind of geometric controls and interactivity that the physical device provides?</p>
+              <p className="problem">PROBLEM: Physical spirographs require a steady hand and leave little room for error. They also can't take advantage of modern drawing features like blend modes and transparency.</p>
+              <p className="solution">SOLUTION: Looplet merges the best of both worlds: layering, blend modes, multiple levels of undo, and all the math-happy spiral looperific creativity you can handle.</p>
+              <p className="product-image"><img src="/images/looplet.webp" alt="Looplet" /></p>
+              <p className="project-link"><a href="https://looplet.app" target="_blank" rel="noopener noreferrer">https://looplet.app</a>
+                <br/><span className="builtwith">Built with React, Node.js, vanilla CSS, deployed on Vercel.</span></p>
+            </>
+          ),
+          featureIcon: (
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" className="feature-icon">
+              <path fill="currentColor" d="M253.93,154.63c-1.32-1.46-24.09-26.22-61-40.56-1.72-18.42-8.46-35.17-19.41-47.92C158.87,49,137.58,40,112,40,60.48,40,26.89,86.18,25.49,88.15a8,8,0,0,0,13,9.31C38.8,97.05,68.81,56,112,56c20.77,0,37.86,7.11,49.41,20.57,7.42,8.64,12.44,19.69,14.67,32A140.87,140.87,0,0,0,140.6,104c-26.06,0-47.93,6.81-63.26,19.69C63.78,135.09,56,151,56,167.25A47.59,47.59,0,0,0,69.87,201.3c9.66,9.62,23.06,14.7,38.73,14.7,51.81,0,81.18-42.13,84.49-84.42a161.43,161.43,0,0,1,49,33.79,8,8,0,1,0,11.86-10.74Zm-94.46,21.64C150.64,187.09,134.66,200,108.6,200,83.32,200,72,183.55,72,167.25,72,144.49,93.47,120,140.6,120a124.34,124.34,0,0,1,36.78,5.68C176.93,144.44,170.46,162.78,159.47,176.27Z"></path>
             </svg>
           )
         }
