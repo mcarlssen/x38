@@ -5,7 +5,7 @@ const Headshot = () => {
     <div className="headshot-container fade-in-up">
       <div className="headshot-wrapper">
         <img 
-          src="/images/mt.png" 
+          src="/images/mt.webp" 
           alt="Mike Thorn" 
           className="headshot-image"
         />
