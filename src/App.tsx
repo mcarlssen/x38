@@ -237,7 +237,7 @@ function App() {
 
       <main className="main container">
         <div className="hero-section">
-         {/* <Headshot /> */}
+          <Headshot /> 
           <h1 className="title fade-in-up">
             Engineering <TypeWriter phrases={phrases} className="title-keyword-text" /><br/>
             for <span style={{ color: 'var(--color-customers)' }}>customers</span>, <span style={{ color: 'var(--color-teams)' }}>teams</span>, and <span style={{ color: 'var(--color-organizations)' }}>organizations</span>.
