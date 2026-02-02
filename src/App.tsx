@@ -243,6 +243,9 @@ function App() {
             for <span style={{ color: 'var(--color-customers)' }}>customers</span>, <span style={{ color: 'var(--color-teams)' }}>teams</span>, and <span style={{ color: 'var(--color-organizations)' }}>organizations</span>.
           </h1>
           
+          <p className="description description-light fade-in-up delay-200">
+          <i>Hi! I'm a customer-centered systems generalist, primarily centered on <b>high-stakes operational and product work</b> in SaaS and IT. I'm known for <b>strong user advocacy</b> and <b>end-to-end ownership</b>: translating customer pain into durable solutions. For fun, I build tools and automations that <b>reduce friction, error, and cognitive load</b>.</i>
+          </p>
           <p className="description fade-in-up delay-200">
             <span className="emphasis">My passion: empowering people to achieve their best,</span><br/>by providing the right <span style={{ color: 'var(--color-customers)' }}>resources</span>, <span style={{ color: 'var(--color-teams)' }}>tools</span>, and <span style={{ color: 'var(--color-organizations)' }}>processes</span> to succeed.
           </p>

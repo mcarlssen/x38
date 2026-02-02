@@ -228,6 +228,11 @@ h6 {
   margin-bottom: 2rem;
 }
 
+.description-light {
+  font-weight: 400;
+  color: #a0a0a0;
+}
+
 .project-description {
   padding: 0.5rem;
   padding-left: 2.5rem;
