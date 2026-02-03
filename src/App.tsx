@@ -1,4 +1,5 @@
-import { Code, FilePdf, GithubLogo, ThreadsLogo, Bookmark, LinkedinLogo } from '@phosphor-icons/react'
+import { Code, FilePdf, FileText, GithubLogo, ThreadsLogo, Bookmark, LinkedinLogo } from '@phosphor-icons/react'
+import { Link } from 'react-router-dom'
 import ProjectAccordion from './components/ProjectAccordion'
 import TypeWriter from './components/TypeWriter'
 import TechnologyGrid from './components/TechnologyGrid'
@@ -295,10 +296,16 @@ function App() {
             </section>
             <section className="footer-section">
               <h2 className="footer-header">VIEW RESUME</h2>
-              <a href="Mike-Thorn-Resume.pdf" className="icon-link resume-link" target="_blank" rel="noopener noreferrer">
-                <FilePdf size={24} weight="fill" />
-                <span className="email">pdf</span>
-              </a>
+              <div className="resume-links">
+                <Link to="/resume" className="icon-link resume-link">
+                  <FileText size={24} weight="fill" />
+                  <span className="email">web</span>
+                </Link>
+                <a href="Mike-Thorn-Resume.pdf" className="icon-link resume-link" target="_blank" rel="noopener noreferrer">
+                  <FilePdf size={24} weight="fill" />
+                  <span className="email">pdf</span>
+                </a>
+              </div>
             </section>
           </div>
           <div className="footer-copyright">

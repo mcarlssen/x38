@@ -907,6 +907,11 @@ h6 {
   margin: 0.5rem 0;
 }
 
+.resume-links {
+  display: flex;
+  gap: 1.5rem;
+}
+
 .resume-link {
   color: var(--color-primary);
   font-size: 1.1rem;
