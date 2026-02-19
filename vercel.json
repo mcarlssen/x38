@@ -1,6 +1,13 @@
 {
+  "redirects": [
+    {
+      "source": "/siftr",
+      "destination": "https://github.com/mcarlssen/linkedin-siftr",
+      "permanent": true
+    }
+  ],
   "rewrites": [
-    { "source": "/proofoflife", "destination": "/api/proofoflife" },
-    { "source": "/((?!api|.*\\..*).*)", "destination": "/index.html" }
+    {"source": "/proofoflife", "destination": "/api/proofoflife"},
+    {"source": "/((?!api|.*\\..*).*)", "destination": "/index.html"}
   ]
 }
