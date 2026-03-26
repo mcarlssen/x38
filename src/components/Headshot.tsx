@@ -18,11 +18,13 @@ const Headshot = () => {
               {/* Using small arc (flag=0) with clockwise sweep (flag=1) for downward concave curve */}
               <path id="text-curve" d="M 5 110 A 100 100 0 0 0 150 183" fill="none" />
             </defs>
+            {/* #opentowork 
             <text className="overlay-text" fill="white">
               <textPath href="#text-curve" startOffset="8%">
                 #opentowork
               </textPath>
             </text>
+            */}
           </svg>
         </div>
       </div>
