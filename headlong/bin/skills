@@ -1,0 +1,1490 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# skills — Skills manager for shellm
+# Manages a local directory of skills following the Agent Skills open
+# standard (SKILL.md format). Pure bash, no external dependencies beyond
+# bash 4+, jq, curl, and git.
+
+# ---------------------------------------------------------------------------
+# Config & defaults
+# ---------------------------------------------------------------------------
+
+SKILLS_VERSION="0.1.0"
+SKILLS_DIR="${SKILLS_DIR:-./.skills}"
+SKILLS_KERNEL_DIR="${SKILLS_KERNEL_DIR:-}"
+SKILLS_KERNEL_TOKEN_BUDGET="${SKILLS_KERNEL_TOKEN_BUDGET:-8000}"
+SKILLS_REMOTES="${SKILLS_REMOTES:-}"
+VERBOSE=0
+
+# Source rc file (flags > env vars > rc file)
+# SKILLSRC env var overrides the default ./.skillsrc location.
+_skillsrc="${SKILLSRC:-.skillsrc}"
+if [[ -f "$_skillsrc" ]]; then
+    _pre_env=$(env | grep '^SKILLS_') || true
+    # shellcheck disable=SC1090  # user rc file, location is runtime
+    source "$_skillsrc"
+    while IFS='=' read -r k v; do
+        [[ -n "$k" ]] && export "$k=$v"
+    done <<< "$_pre_env"
+fi
+# Warn if CWD .skillsrc exists but is being ignored due to SKILLSRC override
+if [[ -n "${SKILLSRC:-}" && -f ".skillsrc" && "$_skillsrc" != ".skillsrc" ]]; then
+    printf '\033[33m⚠\033[0m Ignoring .skillsrc in current directory (using %s)\n' "$_skillsrc" >&2
+fi
+
+# ---------------------------------------------------------------------------
+# Utility functions
+# ---------------------------------------------------------------------------
+
+die() { echo "skills: error: $*" >&2; exit 1; }
+
+# Process SKILL.md content, executing ```bash blocks with #| eval: true.
+# Reads from stdin, writes processed output to stdout.
+# Quarto-inspired directives: eval, echo, stdout, stderr.
+_process_skill_blocks() {
+    local state="passthrough"
+    local -a code_lines=()
+    local eval_dir="false" echo_dir="false" stdout_dir="true" stderr_dir="true"
+    local line key value
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$state" == "passthrough" ]]; then
+            if [[ "$line" =~ ^\`\`\`bash[[:space:]]*$ || "$line" == '```bash' ]]; then
+                state="fence"
+                code_lines=()
+                eval_dir="false"
+                echo_dir="false"
+                stdout_dir="true"
+                stderr_dir="true"
+            else
+                printf '%s\n' "$line"
+            fi
+        elif [[ "$state" == "fence" ]]; then
+            if [[ "$line" =~ ^'#| '([a-zA-Z]+):[[:space:]]*(.*) ]]; then
+                key="${BASH_REMATCH[1]}"
+                value="${BASH_REMATCH[2]}"
+                # Trim trailing whitespace
+                value="${value%"${value##*[![:space:]]}"}"
+                case "$key" in
+                    eval)   eval_dir="$value" ;;
+                    echo)   echo_dir="$value" ;;
+                    stdout) stdout_dir="$value" ;;
+                    stderr) stderr_dir="$value" ;;
+                esac
+            elif [[ "$line" == '```' ]]; then
+                if [[ "$eval_dir" == "true" ]]; then
+                    # Execute the block
+                    if [[ "$echo_dir" == "true" ]]; then
+                        printf '%s\n' '```bash'
+                        printf '%s\n' "${code_lines[@]}"
+                        printf '%s\n' '```'
+                    fi
+                    # Build the script from collected code lines
+                    local script=""
+                    local cl
+                    for cl in "${code_lines[@]}"; do
+                        script="${script}${cl}
+"
+                    done
+                    # Run and capture stdout/stderr separately
+                    local tmp_out tmp_err
+                    tmp_out=$(mktemp)
+                    tmp_err=$(mktemp)
+                    bash -c "$script" >"$tmp_out" 2>"$tmp_err" || true
+                    if [[ "$stdout_dir" == "true" && -s "$tmp_out" ]]; then
+                        cat "$tmp_out"
+                    fi
+                    if [[ "$stderr_dir" == "true" && -s "$tmp_err" ]]; then
+                        cat "$tmp_err"
+                    fi
+                    rm -f "$tmp_out" "$tmp_err"
+                else
+                    # Not eval — emit block unchanged
+                    printf '%s\n' '```bash'
+                    local cl
+                    for cl in "${code_lines[@]}"; do
+                        printf '%s\n' "$cl"
+                    done
+                    printf '%s\n' '```'
+                fi
+                state="passthrough"
+            else
+                code_lines+=("$line")
+            fi
+        fi
+    done
+}
+
+# Color output (respects NO_COLOR env var)
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+    _bold='\033[1m'
+    _dim='\033[90m'
+    _blue='\033[1;34m'
+    _cyan='\033[36m'
+    _yellow='\033[33m'
+    _reset='\033[0m'
+else
+    _bold='' _dim='' _blue='' _cyan='' _yellow='' _reset=''
+fi
+
+info() { printf "${_blue}▶${_reset} %b\n" "$*" >&2; }
+dim() { printf "${_dim}  %s${_reset}\n" "$*" >&2; }
+warn() { printf "${_yellow}⚠${_reset} %b\n" "$*" >&2; }
+
+debug() {
+    if [[ "$VERBOSE" -eq 1 ]]; then
+        printf "${_dim}[skills debug] %s${_reset}\n" "$*" >&2
+    fi
+}
+
+# Extract a field from SKILL.md YAML frontmatter.
+# Usage: frontmatter_field <file> <field>
+# Handles unquoted, double-quoted, and single-quoted values.
+# Only reads the first frontmatter block (between first and second ---).
+frontmatter_field() {
+    local file="$1" field="$2"
+    awk 'NR==1 && /^---$/{f=1; next} f && /^---$/{exit} f{print}' "$file" \
+        | grep "^${field}:" \
+        | head -1 \
+        | sed "s/^${field}:[[:space:]]*//" \
+        | sed "s/^[\"']\(.*\)[\"']$/\1/"
+}
+
+# Resolve the skills directory (project-level or local).
+skills_dir() {
+    local project="${1:-0}"
+    if [[ "$project" -eq 1 ]]; then
+        echo ".skills"
+    else
+        echo "$SKILLS_DIR"
+    fi
+}
+
+# Build deduplicated list of skill search directories.
+# Checks: .skills (project), kernel dir (if set), SKILLS_DIR (identity/override)
+_all_skill_dirs() {
+    local d real _seen=""
+    for d in ".skills" ${SKILLS_KERNEL_DIR:+"$SKILLS_KERNEL_DIR"} "$SKILLS_DIR"; do
+        [[ -z "$d" ]] && continue
+        real=$(cd "$d" 2>/dev/null && pwd) || real="$d"
+        case "$_seen" in
+            *"|$real|"*) continue ;;
+        esac
+        _seen="${_seen}|${real}|"
+        echo "$d"
+    done
+}
+
+# Label a skill directory as project, kernel, or local.
+_skill_dir_label() {
+    local dir="$1" dreal kreal
+    dreal=$(cd "$dir" 2>/dev/null && pwd) || dreal="$dir"
+    if [[ "$dir" == ".skills" ]]; then echo "project"
+    elif [[ -n "$SKILLS_KERNEL_DIR" ]]; then
+        kreal=$(cd "$SKILLS_KERNEL_DIR" 2>/dev/null && pwd) || kreal="$SKILLS_KERNEL_DIR"
+        if [[ "$dreal" == "$kreal" ]]; then echo "kernel"; else echo "local"; fi
+    else echo "local"
+    fi
+}
+
+# Find a skill directory by name. Checks project-level first, then kernel, then local.
+# Matches against the frontmatter `name` field, then the directory name.
+# Prints the path to stdout, or returns 1 if not found.
+find_skill() {
+    local name="$1"
+    local dir skill_dir skill_name
+
+    while IFS= read -r dir; do
+        [[ -d "$dir" ]] || continue
+
+        # Match by directory name
+        if [[ -d "$dir/$name" && -f "$dir/$name/SKILL.md" ]]; then
+            echo "$dir/$name"
+            return
+        fi
+
+        # Match by frontmatter name field
+        for skill_dir in "$dir"/*/; do
+            [[ -f "${skill_dir}SKILL.md" ]] || continue
+            skill_name=$(frontmatter_field "${skill_dir}SKILL.md" "name")
+            if [[ "$skill_name" == "$name" ]]; then
+                printf '%s' "${skill_dir%/}"
+                return
+            fi
+        done
+    done < <(_all_skill_dirs)
+    return 1
+}
+
+# Estimate token count for a file (bytes / 4)
+_token_estimate() {
+    local file="$1"
+    local bytes
+    bytes=$(wc -c < "$file" | tr -d ' ')
+    echo $(( bytes / 4 ))
+}
+
+# Show kernel token budget summary
+_show_kernel_budget() {
+    [[ -z "$SKILLS_KERNEL_DIR" || ! -d "$SKILLS_KERNEL_DIR" ]] && return 0
+
+    local total=0
+    local skill_dir name tokens
+    for skill_dir in "$SKILLS_KERNEL_DIR"/*/; do
+        [[ -f "${skill_dir}SKILL.md" ]] || continue
+        tokens=$(_token_estimate "${skill_dir}SKILL.md")
+        total=$(( total + tokens ))
+    done
+
+    printf "\n"
+    printf "${_dim}Kernel total: ~%d / %d token budget${_reset}\n" "$total" "$SKILLS_KERNEL_TOKEN_BUDGET" >&2
+    if [[ "$total" -gt "$SKILLS_KERNEL_TOKEN_BUDGET" ]]; then
+        warn "Kernel exceeds token budget by ~$(( total - SKILLS_KERNEL_TOKEN_BUDGET )) tokens"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Requirements parsing & checking
+# ---------------------------------------------------------------------------
+
+# Extract metadata.shelllm block from SKILL.md frontmatter as JSON.
+# Supports inline JSON (metadata: {"shelllm": {...}}) and multi-line YAML.
+# Returns JSON: {"requires":{"env":[],"bins":[],"anyBins":[],"os":[]}}
+# Returns "{}" if no metadata.shelllm block found.
+_extract_shelllm_meta() {
+    local file="$1"
+    [[ -f "$file" ]] || { echo '{}'; return; }
+
+    # Extract only the first frontmatter block (between first and second ---)
+    # Using awk instead of sed to avoid capturing --- delimited blocks in the body
+    local frontmatter
+    frontmatter=$(awk 'NR==1 && /^---$/{f=1; next} f && /^---$/{exit} f{print}' "$file")
+    [[ -z "$frontmatter" ]] && { echo '{}'; return; }
+
+    # Check if metadata exists at all
+    printf '%s\n' "$frontmatter" | grep -q '^metadata:' || { echo '{}'; return; }
+
+    # Try inline JSON: metadata: {"shelllm": {...}}
+    local meta_inline
+    meta_inline=$(printf '%s\n' "$frontmatter" | grep '^metadata:' | sed 's/^metadata:[[:space:]]*//')
+    if [[ -n "$meta_inline" ]] && printf '%s' "$meta_inline" | jq -e '.shelllm' >/dev/null 2>&1; then
+        printf '%s' "$meta_inline" | jq -c '.shelllm'
+        return
+    fi
+
+    # Multi-line YAML: extract requires fields by grepping indented lines.
+    # Arrays use JSON bracket notation ["a", "b"], so jq can parse them directly.
+    local env_val bins_val anybins_val os_val
+    env_val=$(printf '%s\n' "$frontmatter" | awk '/^[[:space:]]+env:/{sub(/.*env:[[:space:]]*/, ""); print; exit}')
+    bins_val=$(printf '%s\n' "$frontmatter" | awk '/^[[:space:]]+bins:/{sub(/.*bins:[[:space:]]*/, ""); print; exit}')
+    anybins_val=$(printf '%s\n' "$frontmatter" | awk '/^[[:space:]]+anyBins:/{sub(/.*anyBins:[[:space:]]*/, ""); print; exit}')
+    os_val=$(printf '%s\n' "$frontmatter" | awk '/^[[:space:]]+os:/{sub(/.*os:[[:space:]]*/, ""); print; exit}')
+
+    # If nothing found, return empty
+    if [[ -z "$env_val" && -z "$bins_val" && -z "$anybins_val" && -z "$os_val" ]]; then
+        echo '{}'
+        return
+    fi
+
+    jq -n \
+        --argjson env "${env_val:-[]}" \
+        --argjson bins "${bins_val:-[]}" \
+        --argjson anybins "${anybins_val:-[]}" \
+        --argjson os "${os_val:-[]}" \
+        '{requires: {env: $env, bins: $bins, anyBins: $anybins, os: $os}}'
+}
+
+# Returns a comma-separated summary of missing requirements.
+# Takes the JSON from _extract_shelllm_meta as $1.
+_missing_summary() {
+    local meta="$1"
+    [[ "$meta" == "{}" || -z "$meta" ]] && return
+
+    local missing=""
+
+    # Missing env vars
+    local var
+    while IFS= read -r var; do
+        [[ -z "$var" ]] && continue
+        if [[ -z "${!var:-}" ]]; then
+            [[ -n "$missing" ]] && missing="$missing, "
+            missing="${missing}${var}"
+        fi
+    done < <(printf '%s' "$meta" | jq -r '(.requires.env // [])[]' 2>/dev/null)
+
+    # Missing required bins
+    local bin
+    while IFS= read -r bin; do
+        [[ -z "$bin" ]] && continue
+        if ! command -v "$bin" >/dev/null 2>&1; then
+            [[ -n "$missing" ]] && missing="$missing, "
+            missing="${missing}${bin}"
+        fi
+    done < <(printf '%s' "$meta" | jq -r '(.requires.bins // [])[]' 2>/dev/null)
+
+    # Missing anyBins
+    local any_count=0 any_found=0 any_names=""
+    while IFS= read -r bin; do
+        [[ -z "$bin" ]] && continue
+        any_count=$((any_count + 1))
+        [[ -n "$any_names" ]] && any_names="$any_names, "
+        any_names="${any_names}${bin}"
+        command -v "$bin" >/dev/null 2>&1 && any_found=1
+    done < <(printf '%s' "$meta" | jq -r '(.requires.anyBins // [])[]' 2>/dev/null)
+    if [[ "$any_count" -gt 0 && "$any_found" -eq 0 ]]; then
+        [[ -n "$missing" ]] && missing="$missing, "
+        missing="${missing}one of [${any_names}]"
+    fi
+
+    # Missing OS
+    local os_count
+    os_count=$(printf '%s' "$meta" | jq -r '(.requires.os // []) | length' 2>/dev/null)
+    if [[ "${os_count:-0}" -gt 0 ]]; then
+        local current_os
+        current_os=$(uname -s | tr '[:upper:]' '[:lower:]')
+        if ! printf '%s' "$meta" | jq -e --arg os "$current_os" '(.requires.os // []) | index($os) != null' >/dev/null 2>&1; then
+            [[ -n "$missing" ]] && missing="$missing, "
+            missing="${missing}os:${current_os}"
+        fi
+    fi
+
+    printf '%s' "$missing"
+}
+
+# ---------------------------------------------------------------------------
+# Remote management utilities
+# ---------------------------------------------------------------------------
+
+SKILLS_REMOTE_CACHE="${HOME}/.skills-remotes"
+
+# Split SKILLS_REMOTES on commas, trim whitespace, output one per line.
+_parse_remotes() {
+    local IFS=','
+    local r
+    for r in $SKILLS_REMOTES; do
+        r="${r#"${r%%[![:space:]]*}"}"  # trim leading
+        r="${r%"${r##*[![:space:]]}"}"  # trim trailing
+        [[ -n "$r" ]] && echo "$r"
+    done
+}
+
+# Returns 0 if remote is a git URL, 1 if filesystem path.
+_is_git_remote() {
+    local remote="$1"
+    case "$remote" in
+        https://*|http://*|git://*|ssh://*|git@*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Returns the local cache path for a git remote URL.
+_remote_cache_dir() {
+    local remote="$1"
+    local sanitized
+    # Strip protocol prefix
+    sanitized="${remote#https://}"
+    sanitized="${sanitized#http://}"
+    sanitized="${sanitized#git://}"
+    sanitized="${sanitized#ssh://}"
+    sanitized="${sanitized#git@}"
+    # Strip .git suffix
+    sanitized="${sanitized%.git}"
+    # Replace / and : with -
+    sanitized="${sanitized//\//-}"
+    sanitized="${sanitized//:/-}"
+    echo "${SKILLS_REMOTE_CACHE}/${sanitized}"
+}
+
+# Clone or pull a git remote into the cache. Warns on failure.
+_sync_remote_cache() {
+    local remote="$1"
+    local cache_dir
+    cache_dir=$(_remote_cache_dir "$remote")
+
+    if [[ ! -d "$cache_dir" ]]; then
+        printf "${_dim}Cloning %s...${_reset}\n" "$remote" >&2
+        git clone --depth 1 -q "$remote" "$cache_dir" 2>/dev/null || {
+            warn "Failed to clone remote: $remote"
+            return 1
+        }
+    else
+        printf "${_dim}Updating %s...${_reset}\n" "$remote" >&2
+        git -C "$cache_dir" pull --ff-only -q 2>/dev/null || {
+            warn "Failed to update remote: $remote"
+            return 1
+        }
+    fi
+    return 0
+}
+
+# Returns the local filesystem path to scan for skills in a remote.
+# For git remotes: syncs cache, returns cache dir.
+# For filesystem remotes: returns the path directly.
+_remote_local_path() {
+    local remote="$1"
+    if _is_git_remote "$remote"; then
+        _sync_remote_cache "$remote" || return 1
+        _remote_cache_dir "$remote"
+    else
+        [[ -d "$remote" ]] || { warn "Remote path not found: $remote"; return 1; }
+        echo "$remote"
+    fi
+}
+
+# Fetch skills from a single remote. Outputs tab-separated: name\tdescription\tremote
+_fetch_remote_skills() {
+    local remote="$1"
+    local path
+    path=$(_remote_local_path "$remote") || return 0
+
+    local skill_dir name desc
+    for skill_dir in "$path"/*/; do
+        [[ -f "${skill_dir}SKILL.md" ]] || continue
+        name=$(frontmatter_field "${skill_dir}SKILL.md" "name")
+        desc=$(frontmatter_field "${skill_dir}SKILL.md" "description")
+        [[ -z "$name" ]] && name=$(basename "$skill_dir")
+        printf '%s\t%s\t%s\n' "$name" "$desc" "$remote"
+    done
+}
+
+# Fetch skills from all configured remotes.
+_all_remote_skills() {
+    local remote
+    while IFS= read -r remote; do
+        _fetch_remote_skills "$remote"
+    done < <(_parse_remotes)
+}
+
+# Output one installed skill name per line.
+_installed_skill_names() {
+    local dir skill_dir name
+    while IFS= read -r dir; do
+        [[ -d "$dir" ]] || continue
+        for skill_dir in "$dir"/*/; do
+            [[ -f "${skill_dir}SKILL.md" ]] || continue
+            name=$(frontmatter_field "${skill_dir}SKILL.md" "name")
+            [[ -z "$name" ]] && name=$(basename "$skill_dir")
+            echo "$name"
+        done
+    done < <(_all_skill_dirs)
+}
+
+# Search remotes for a skill by name. Prints the remote on stdout. Returns 0 if found.
+_find_skill_in_remotes() {
+    local target="$1"
+    local name desc remote
+    while IFS=$'\t' read -r name desc remote; do
+        if [[ "$name" == "$target" ]]; then
+            echo "$remote"
+            return 0
+        fi
+    done < <(_all_remote_skills)
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# Actions
+# ---------------------------------------------------------------------------
+
+action_list() {
+    local show_all="${1:-0}"
+    local format="${2:-}"
+    local found=0
+    local dir label skill_dir name desc
+    local skipped=""
+    # Track seen skill names for conflict detection (pipe-delimited for bash 3.2 compat)
+    local _seen_skills="|"
+    local _seen_paths=""
+
+    while IFS= read -r dir; do
+        [[ -d "$dir" ]] || continue
+        label=$(_skill_dir_label "$dir")
+
+        for skill_dir in "$dir"/*/; do
+            [[ -f "${skill_dir}SKILL.md" ]] || continue
+
+            name=$(frontmatter_field "${skill_dir}SKILL.md" "name")
+            desc=$(frontmatter_field "${skill_dir}SKILL.md" "description")
+            [[ -z "$name" ]] && name=$(basename "$skill_dir")
+
+            # Detect conflicts: same skill name from multiple directories
+            local skill_path="${skill_dir%/}"
+            case "$_seen_skills" in
+                *"|${name}|"*)
+                    # Find the earlier path for the warning
+                    local prev_path
+                    prev_path=$(printf '%s\n' "$_seen_paths" | grep "^${name}	" | head -1 | cut -f2)
+                    warn "skill ${_bold}${name}${_reset} found in multiple locations:\n    ${prev_path}\n    ${skill_path}\n  Using the first one. Remove one copy to resolve."
+                    continue
+                    ;;
+            esac
+            _seen_skills="${_seen_skills}${name}|"
+            _seen_paths="${_seen_paths}${name}	${skill_path}
+"
+
+            # Check requirements (empty summary == all requirements met)
+            local meta eligible=1 missing
+            meta=$(_extract_shelllm_meta "${skill_dir}SKILL.md")
+            missing=$(_missing_summary "$meta")
+            if [[ -n "$missing" ]]; then
+                eligible=0
+            fi
+
+            # Ineligible skills go to the Skipped footer, unless --all
+            # promotes them into the main list annotated with what's missing.
+            if [[ "$eligible" -eq 0 && "$show_all" -eq 0 ]]; then
+                if [[ "$format" != "prompt" ]]; then
+                    [[ ${#desc} -gt 60 ]] && desc="${desc:0:57}..."
+                    skipped+="$(printf "  ${_bold}%-20s${_reset} %-60b ${_cyan}[%s]${_reset} ${_yellow}(missing: %s)${_reset}\n    ${_dim}%s${_reset}\n" \
+                        "$name" "${_dim}${desc}" "$label" "$missing" "$skill_path")
+"
+                fi
+                continue
+            fi
+
+            found=1
+
+            if [[ "$format" == "prompt" ]]; then
+                printf -- '- %s: %s\n' "$name" "$desc"
+            elif [[ "$eligible" -eq 0 ]]; then
+                [[ ${#desc} -gt 60 ]] && desc="${desc:0:57}..."
+                printf "  ${_bold}%-20s${_reset} %-60b ${_cyan}[%s]${_reset} ${_yellow}(missing: %s)${_reset}\n    ${_dim}%s${_reset}\n" \
+                    "$name" "${_dim}${desc}" "$label" "$missing" "$skill_path"
+            else
+                [[ ${#desc} -gt 60 ]] && desc="${desc:0:57}..."
+                printf "  ${_bold}%-20s${_reset} %-60b ${_cyan}[%s]${_reset}\n    ${_dim}%s${_reset}\n" \
+                    "$name" "${_dim}${desc}" "$label" "$skill_path"
+            fi
+        done
+    done < <(_all_skill_dirs)
+
+    if [[ "$format" != "prompt" ]]; then
+        if [[ "$found" -eq 0 ]]; then
+            echo "No skills installed." >&2
+            printf "  Run ${_bold}skills --init${_reset} to create one, or ${_bold}skills <query>${_reset} to search.\n" >&2
+        fi
+
+        # --- Available from remotes ---
+        if [[ -n "$SKILLS_REMOTES" ]]; then
+            printf "\n${_bold}Available (from remotes)${_reset}\n"
+
+            # Build pipe-delimited installed names for O(1) lookup (bash 3.2 compat)
+            local installed_names="|"
+            local iname
+            while IFS= read -r iname; do
+                installed_names="${installed_names}${iname}|"
+            done < <(_installed_skill_names)
+
+            local remote_found=0
+            local rname rdesc rremote
+            while IFS=$'\t' read -r rname rdesc rremote; do
+                # Skip if already installed
+                case "$installed_names" in
+                    *"|${rname}|"*) continue ;;
+                esac
+                remote_found=1
+                [[ ${#rdesc} -gt 60 ]] && rdesc="${rdesc:0:57}..."
+                printf "  ${_bold}%-20s${_reset} ${_dim}%-60s${_reset} ${_cyan}[remote]${_reset}\n" "$rname" "$rdesc"
+            done < <(_all_remote_skills)
+
+            [[ "$remote_found" -eq 0 ]] && printf "  ${_dim}(none)${_reset}\n"
+        fi
+
+        # --- Skipped (missing requirements) ---
+        if [[ -n "$skipped" ]]; then
+            printf "\n${_bold}Skipped (missing requirements)${_reset}\n"
+            printf '%b' "$skipped"
+        fi
+    fi
+}
+
+action_list_json() {
+    local dir skill_dir name desc body
+    local first=1
+
+    printf '['
+    while IFS= read -r dir; do
+        [[ -d "$dir" ]] || continue
+        for skill_dir in "$dir"/*/; do
+            [[ -f "${skill_dir}SKILL.md" ]] || continue
+            name=$(frontmatter_field "${skill_dir}SKILL.md" "name")
+            desc=$(frontmatter_field "${skill_dir}SKILL.md" "description")
+            [[ -z "$name" ]] && name=$(basename "$skill_dir")
+            body=$(sed -n '/^---$/,/^---$/d; p' "${skill_dir}SKILL.md")
+
+            [[ "$first" -eq 1 ]] && first=0 || printf ','
+            jq -n --arg n "$name" --arg d "$desc" --arg b "$body" \
+                '{name: $n, description: $d, instructions: $b}'
+        done
+    done < <(_all_skill_dirs)
+    printf ']\n'
+}
+
+action_search() {
+    local query="$1"
+    local found_local=0
+    local dir skill_dir name desc
+
+    # --- Local matches ---
+    printf "${_bold}Installed${_reset}\n"
+
+    while IFS= read -r dir; do
+        [[ -d "$dir" ]] || continue
+        for skill_dir in "$dir"/*/; do
+            [[ -f "${skill_dir}SKILL.md" ]] || continue
+            name=$(frontmatter_field "${skill_dir}SKILL.md" "name")
+            desc=$(frontmatter_field "${skill_dir}SKILL.md" "description")
+            [[ -z "$name" ]] && name=$(basename "$skill_dir")
+
+            if printf '%s %s' "$name" "$desc" | grep -qi "$query"; then
+                found_local=1
+                printf "  ${_bold}%-20s${_reset} %s\n" "$name" "$desc"
+            fi
+        done
+    done < <(_all_skill_dirs)
+
+    [[ "$found_local" -eq 0 ]] && printf "  ${_dim}No local matches.${_reset}\n"
+    echo ""
+
+    # --- Remote matches ---
+    printf "${_bold}Available${_reset}\n"
+
+    if [[ -n "$SKILLS_REMOTES" ]]; then
+        # Search configured remotes
+        local remote_found=0
+        local rname rdesc rremote
+        while IFS=$'\t' read -r rname rdesc rremote; do
+            if printf '%s %s' "$rname" "$rdesc" | grep -qi "$query"; then
+                remote_found=1
+                printf "  ${_bold}%-20s${_reset} %-50s ${_dim}%s${_reset}\n" "$rname" "$rdesc" "$rremote"
+            fi
+        done < <(_all_remote_skills)
+
+        if [[ "$remote_found" -eq 0 ]]; then
+            printf "  ${_dim}No remote matches.${_reset}\n"
+        fi
+    else
+        # Fallback: GitHub-wide search
+        local encoded_query
+        encoded_query=$(printf '%s' "$query" | jq -sRr @uri)
+        local api_url="https://api.github.com/search/repositories?q=${encoded_query}+filename:SKILL.md&per_page=10&sort=stars&order=desc"
+        debug "GitHub API: $api_url"
+
+        local response
+        response=$(curl -sS --max-time 10 "$api_url" 2>/dev/null) || {
+            printf "  ${_dim}GitHub search failed (network error).${_reset}\n"
+            return 0
+        }
+
+        local api_msg
+        api_msg=$(printf '%s' "$response" | jq -r '.message // empty' 2>/dev/null)
+        if [[ -n "$api_msg" ]]; then
+            printf "  ${_dim}GitHub API: %s${_reset}\n" "$api_msg"
+            return 0
+        fi
+
+        local count
+        count=$(printf '%s' "$response" | jq '.items | length' 2>/dev/null) || count=0
+
+        if [[ "$count" -eq 0 ]]; then
+            printf "  ${_dim}No remote matches.${_reset}\n"
+            return 0
+        fi
+
+        printf '%s' "$response" | jq -r '.items[] | "\(.full_name)\t\(.description // "—")\t★ \(.stargazers_count)\t\(.html_url)"' \
+            | while IFS=$'\t' read -r repo rdesc stars url; do
+                [[ ${#rdesc} -gt 50 ]] && rdesc="${rdesc:0:47}..."
+                printf "  ${_bold}%-30s${_reset} %-50s ${_dim}%s${_reset}\n" "$repo" "$rdesc" "$stars"
+                dim "  $url"
+            done
+    fi
+}
+
+action_install() {
+    local source="$1"
+    local project="$2"
+    local target_dir
+    target_dir=$(skills_dir "$project")
+    mkdir -p "$target_dir"
+
+    local skill_src=""
+    local cloned=0
+
+    if [[ -d "$source" ]]; then
+        # --- Case 1: Local path ---
+        [[ -f "$source/SKILL.md" ]] || die "No SKILL.md found in: $source"
+        skill_src="$source"
+    elif [[ "$source" =~ ^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$ ]] || _is_git_remote "$source" 2>/dev/null; then
+        # --- Case 2: GitHub shorthand (owner/repo) or full URL ---
+        local repo_url="$source"
+        if [[ "$source" =~ ^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$ ]]; then
+            repo_url="https://github.com/$source"
+        fi
+
+        skill_src=$(mktemp -d)
+        cloned=1
+
+        info "Cloning $repo_url..."
+        git clone --depth 1 --quiet "$repo_url" "$skill_src" 2>/dev/null \
+            || { rm -rf "$skill_src"; die "Failed to clone: $repo_url"; }
+
+        [[ -f "$skill_src/SKILL.md" ]] || { rm -rf "$skill_src"; die "No SKILL.md found in repository: $repo_url"; }
+    else
+        # --- Case 3: Bare skill name — look up in remotes ---
+        [[ -n "$SKILLS_REMOTES" ]] || die "Invalid source: $source (expected name, owner/repo, URL, or local path)"
+
+        local found_remote
+        found_remote=$(_find_skill_in_remotes "$source") || die "Skill '$source' not found in configured remotes"
+
+        # Get local path for the remote (cache was already synced by _find_skill_in_remotes)
+        local remote_path
+        if _is_git_remote "$found_remote"; then
+            remote_path=$(_remote_cache_dir "$found_remote")
+        else
+            remote_path="$found_remote"
+        fi
+        [[ -d "$remote_path" ]] || die "Failed to access remote: $found_remote"
+
+        # Find the skill subdirectory in the remote
+        local remote_skill_dir=""
+        local rsd rname
+        for rsd in "$remote_path"/*/; do
+            [[ -f "${rsd}SKILL.md" ]] || continue
+            rname=$(frontmatter_field "${rsd}SKILL.md" "name")
+            [[ -z "$rname" ]] && rname=$(basename "$rsd")
+            if [[ "$rname" == "$source" ]]; then
+                remote_skill_dir="${rsd%/}"
+                break
+            fi
+        done
+        [[ -z "$remote_skill_dir" ]] && die "Skill '$source' not found in remote: $found_remote"
+
+        skill_src="$remote_skill_dir"
+    fi
+
+    # Read skill metadata
+    local skill_name skill_desc
+    skill_name=$(frontmatter_field "$skill_src/SKILL.md" "name")
+    skill_desc=$(frontmatter_field "$skill_src/SKILL.md" "description")
+    [[ -z "$skill_name" ]] && skill_name=$(basename "$source" .git)
+
+    local install_dir="$target_dir/$skill_name"
+    if [[ -d "$install_dir" ]]; then
+        [[ "$cloned" -eq 1 ]] && rm -rf "$skill_src"
+        die "Skill '$skill_name' already installed at: $install_dir"
+    fi
+
+    if [[ "$cloned" -eq 1 ]]; then
+        mv "$skill_src" "$install_dir"
+    else
+        cp -R "$skill_src" "$install_dir"
+    fi
+
+    rm -rf "$install_dir/.git"
+
+    info "Installed: ${_bold}$skill_name${_reset}"
+    [[ -n "$skill_desc" ]] && dim "$skill_desc"
+
+    # Show requirements info
+    local meta
+    meta=$(_extract_shelllm_meta "$install_dir/SKILL.md")
+    if [[ "$meta" != "{}" ]]; then
+        # Env vars
+        local has_env=0 var
+        while IFS= read -r var; do
+            [[ -z "$var" ]] && continue
+            if [[ "$has_env" -eq 0 ]]; then
+                printf "\nThis skill requires environment variables:\n"
+                has_env=1
+            fi
+            if [[ -n "${!var:-}" ]]; then
+                printf "  %s  ${_dim}(set)${_reset}\n" "$var"
+            else
+                printf "  %s  ${_yellow}(not set)${_reset}\n" "$var"
+            fi
+        done < <(printf '%s' "$meta" | jq -r '(.requires.env // [])[]' 2>/dev/null)
+
+        if [[ "$has_env" -eq 1 ]]; then
+            printf "\nSet these in your shell environment, e.g.:\n"
+            printf "  export %s=\"...\"\n" "$var"
+            printf "\nOr use your preferred secrets manager:\n"
+            printf "  export %s=\$(op read \"op://Personal/%s/api_key\")\n" "$var" "$skill_name"
+            printf "  export %s=\$(pass show %s/api_key)\n" "$var" "$skill_name"
+        fi
+
+        # Binaries
+        local has_bins=0 bin
+        while IFS= read -r bin; do
+            [[ -z "$bin" ]] && continue
+            if [[ "$has_bins" -eq 0 ]]; then
+                printf "\nRequired binaries:\n"
+                has_bins=1
+            fi
+            if command -v "$bin" >/dev/null 2>&1; then
+                printf "  %s ${_dim}(installed)${_reset}\n" "$bin"
+            else
+                printf "  %s ${_yellow}(not found)${_reset}\n" "$bin"
+            fi
+        done < <(printf '%s' "$meta" | jq -r '((.requires.bins // []) + (.requires.anyBins // []))[]' 2>/dev/null)
+    fi
+}
+
+action_remove() {
+    local name="$1"
+    local force="$2"
+
+    local skill_dir
+    skill_dir=$(find_skill "$name") || die "Skill not found: $name"
+
+    if [[ "$force" -eq 0 ]]; then
+        printf "Remove skill '%s' from %s? [y/N] " "$name" "$skill_dir" >&2
+        local reply
+        read -r reply
+        [[ "$reply" =~ ^[Yy]$ ]] || { echo "Cancelled." >&2; return 0; }
+    fi
+
+    rm -rf "$skill_dir"
+    info "Removed: $name"
+}
+
+action_show() {
+    local name="$1"
+    local show_requires="${2:-0}"
+
+    local skill_dir
+    skill_dir=$(find_skill "$name") || die "Skill not found: $name"
+
+    if [[ "$show_requires" -eq 1 ]]; then
+        local meta
+        meta=$(_extract_shelllm_meta "$skill_dir/SKILL.md")
+        if [[ "$meta" == "{}" ]]; then
+            printf "No requirements declared.\n"
+        else
+            printf '%s' "$meta" | jq '.'
+        fi
+    else
+        _process_skill_blocks < "$skill_dir/SKILL.md"
+    fi
+}
+
+action_check() {
+    local name="$1"
+
+    local skill_dir
+    skill_dir=$(find_skill "$name") || die "Skill not found: $name"
+
+    local meta
+    meta=$(_extract_shelllm_meta "$skill_dir/SKILL.md")
+
+    if [[ "$meta" == "{}" ]]; then
+        printf "No requirements declared.\n"
+        return 0
+    fi
+
+    local all_met=0
+
+    # Check env vars
+    local var
+    while IFS= read -r var; do
+        [[ -z "$var" ]] && continue
+        if [[ -n "${!var:-}" ]]; then
+            printf "OK    env  %s\n" "$var"
+        else
+            printf "MISS  env  %s\n" "$var"
+            all_met=1
+        fi
+    done < <(printf '%s' "$meta" | jq -r '(.requires.env // [])[]' 2>/dev/null)
+
+    # Check required bins
+    local bin
+    while IFS= read -r bin; do
+        [[ -z "$bin" ]] && continue
+        if command -v "$bin" >/dev/null 2>&1; then
+            printf "OK    bin  %s\n" "$bin"
+        else
+            printf "MISS  bin  %s\n" "$bin"
+            all_met=1
+        fi
+    done < <(printf '%s' "$meta" | jq -r '(.requires.bins // [])[]' 2>/dev/null)
+
+    # Check anyBins (at least one must exist)
+    local any_count=0 any_found=0
+    local -a any_results=()
+    while IFS= read -r bin; do
+        [[ -z "$bin" ]] && continue
+        any_count=$((any_count + 1))
+        if command -v "$bin" >/dev/null 2>&1; then
+            any_results+=("OK    bin  $bin (any)")
+            any_found=1
+        else
+            any_results+=("MISS  bin  $bin (any)")
+        fi
+    done < <(printf '%s' "$meta" | jq -r '(.requires.anyBins // [])[]' 2>/dev/null)
+    if [[ "$any_count" -gt 0 ]]; then
+        printf '%s\n' "${any_results[@]}"
+        [[ "$any_found" -eq 0 ]] && all_met=1
+    fi
+
+    # Check OS
+    local current_os os_count
+    current_os=$(uname -s | tr '[:upper:]' '[:lower:]')
+    os_count=$(printf '%s' "$meta" | jq -r '(.requires.os // []) | length' 2>/dev/null)
+    if [[ "${os_count:-0}" -gt 0 ]]; then
+        if printf '%s' "$meta" | jq -e --arg os "$current_os" '(.requires.os // []) | index($os) != null' >/dev/null 2>&1; then
+            printf "OK    os   %s\n" "$current_os"
+        else
+            local os_list
+            os_list=$(printf '%s' "$meta" | jq -r '(.requires.os // []) | join(", ")' 2>/dev/null)
+            printf "MISS  os   %s (need: %s)\n" "$current_os" "$os_list"
+            all_met=1
+        fi
+    fi
+
+    return $all_met
+}
+
+action_init() {
+    local name="$1"
+    local desc="$2"
+    local project="${3:-0}"
+
+    # Prompt interactively if not provided
+    if [[ -z "$name" ]]; then
+        if [[ -t 0 ]]; then
+            printf "Skill name: " >&2
+            read -r name
+        fi
+        [[ -z "$name" ]] && die "Name is required"
+    fi
+
+    if [[ -z "$desc" ]] && [[ -t 0 ]]; then
+        printf "Description: " >&2
+        read -r desc
+    fi
+
+    local target_dir
+    target_dir=$(skills_dir "$project")
+    local skill_dir="$target_dir/$name"
+    [[ -d "$skill_dir" ]] && die "Directory already exists: $skill_dir"
+
+    mkdir -p "$skill_dir"/{scripts,references,assets}
+
+    cat > "$skill_dir/SKILL.md" << EOF
+---
+name: $name
+description: $desc
+---
+
+# $name
+
+## Instructions
+
+<!-- Describe what this skill does and how an LLM should use it. -->
+EOF
+
+    info "Created skill scaffold: ${_bold}$skill_dir/${_reset}"
+    dim "SKILL.md"
+    dim "scripts/"
+    dim "references/"
+    dim "assets/"
+}
+
+action_promote() {
+    local name="$1"
+
+    [[ -z "$SKILLS_KERNEL_DIR" ]] && die "No kernel directory configured (set SKILLS_KERNEL_DIR)"
+
+    # Check if already in kernel
+    if [[ -d "$SKILLS_KERNEL_DIR/$name" && -f "$SKILLS_KERNEL_DIR/$name/SKILL.md" ]]; then
+        die "Skill '$name' is already in the kernel"
+    fi
+
+    # Also check by frontmatter name in kernel
+    local kdir
+    for kdir in "$SKILLS_KERNEL_DIR"/*/; do
+        [[ -f "${kdir}SKILL.md" ]] || continue
+        local kname
+        kname=$(frontmatter_field "${kdir}SKILL.md" "name")
+        if [[ "$kname" == "$name" ]]; then
+            die "Skill '$name' is already in the kernel (as $(basename "$kdir"))"
+        fi
+    done
+
+    # Find skill in SKILLS_DIR (identity's skills/)
+    local skill_path=""
+    if [[ -d "$SKILLS_DIR/$name" && -f "$SKILLS_DIR/$name/SKILL.md" ]]; then
+        skill_path="$SKILLS_DIR/$name"
+    else
+        # Try frontmatter name match in SKILLS_DIR only
+        local sdir
+        for sdir in "$SKILLS_DIR"/*/; do
+            [[ -f "${sdir}SKILL.md" ]] || continue
+            local sname
+            sname=$(frontmatter_field "${sdir}SKILL.md" "name")
+            if [[ "$sname" == "$name" ]]; then
+                skill_path="${sdir%/}"
+                break
+            fi
+        done
+    fi
+
+    [[ -z "$skill_path" ]] && die "Skill '$name' not found in skills directory"
+
+    # Move to kernel
+    local dirname
+    dirname=$(basename "$skill_path")
+    mv "$skill_path" "$SKILLS_KERNEL_DIR/$dirname"
+
+    info "Promoted ${_bold}$name${_reset} to kernel"
+    _show_kernel_budget
+}
+
+action_kernel() {
+    if [[ -z "$SKILLS_KERNEL_DIR" || ! -d "$SKILLS_KERNEL_DIR" ]]; then
+        echo "No kernel directory configured (set SKILLS_KERNEL_DIR)." >&2
+        return 0
+    fi
+
+    local found=0
+    local total=0
+    local skill_dir name tokens
+
+    printf "${_bold}Kernel skills${_reset} ${_dim}(loaded on every turn)${_reset}\n" >&2
+
+    for skill_dir in "$SKILLS_KERNEL_DIR"/*/; do
+        [[ -f "${skill_dir}SKILL.md" ]] || continue
+        found=1
+
+        name=$(frontmatter_field "${skill_dir}SKILL.md" "name")
+        [[ -z "$name" ]] && name=$(basename "$skill_dir")
+        tokens=$(_token_estimate "${skill_dir}SKILL.md")
+        total=$(( total + tokens ))
+
+        printf "  ${_bold}%-20s${_reset} ${_dim}~%d tokens${_reset}\n" "$name" "$tokens" >&2
+    done
+
+    if [[ "$found" -eq 0 ]]; then
+        printf "  ${_dim}(empty)${_reset}\n" >&2
+    else
+        printf "${_dim}Total: ~%d / %d token budget${_reset}\n" "$total" "$SKILLS_KERNEL_TOKEN_BUDGET" >&2
+        if [[ "$total" -gt "$SKILLS_KERNEL_TOKEN_BUDGET" ]]; then
+            warn "Kernel exceeds token budget by ~$(( total - SKILLS_KERNEL_TOKEN_BUDGET )) tokens"
+        fi
+    fi
+}
+
+action_remote_list() {
+    local remote
+    local found=0
+    while IFS= read -r remote; do
+        found=1
+        if _is_git_remote "$remote"; then
+            printf "  ${_cyan}[git]${_reset}   %s\n" "$remote"
+        else
+            printf "  ${_cyan}[local]${_reset} %s\n" "$remote"
+        fi
+    done < <(_parse_remotes)
+
+    if [[ "$found" -eq 0 ]]; then
+        echo "No remotes configured." >&2
+        printf "  Run ${_bold}skills remote add <url|path>${_reset} to add one.\n" >&2
+    fi
+}
+
+action_remote_add() {
+    local new_remote="$1"
+    [[ -z "$new_remote" ]] && die "remote add requires a URL or path"
+
+    # Check for duplicates
+    local remote
+    while IFS= read -r remote; do
+        if [[ "$remote" == "$new_remote" ]]; then
+            warn "Remote already configured: $new_remote"
+            return 0
+        fi
+    done < <(_parse_remotes)
+
+    # Append to SKILLS_REMOTES
+    if [[ -z "$SKILLS_REMOTES" ]]; then
+        SKILLS_REMOTES="$new_remote"
+    else
+        SKILLS_REMOTES="${SKILLS_REMOTES},${new_remote}"
+    fi
+
+    # Persist to .skillsrc
+    _write_remotes_to_skillsrc
+
+    # Clone if git remote
+    if _is_git_remote "$new_remote"; then
+        mkdir -p "$SKILLS_REMOTE_CACHE"
+        _sync_remote_cache "$new_remote"
+    fi
+
+    info "Added remote: $new_remote"
+}
+
+action_remote_remove() {
+    local target="$1"
+    [[ -z "$target" ]] && die "remote remove requires a URL or path"
+
+    local new_list=""
+    local found=0
+    local remote
+    while IFS= read -r remote; do
+        if [[ "$remote" == "$target" ]]; then
+            found=1
+        else
+            if [[ -z "$new_list" ]]; then
+                new_list="$remote"
+            else
+                new_list="${new_list},${remote}"
+            fi
+        fi
+    done < <(_parse_remotes)
+
+    [[ "$found" -eq 0 ]] && die "Remote not found: $target"
+
+    SKILLS_REMOTES="$new_list"
+    _write_remotes_to_skillsrc
+    info "Removed remote: $target"
+}
+
+# Write current SKILLS_REMOTES value to the active skillsrc
+_write_remotes_to_skillsrc() {
+    local rc_file="$_skillsrc"
+    if [[ -f "$rc_file" ]]; then
+        # Update existing SKILLS_REMOTES line or append
+        if grep -q '^SKILLS_REMOTES=' "$rc_file"; then
+            local tmp
+            tmp=$(mktemp)
+            while IFS= read -r line; do
+                if [[ "$line" == SKILLS_REMOTES=* ]]; then
+                    echo "SKILLS_REMOTES=\"${SKILLS_REMOTES}\""
+                else
+                    echo "$line"
+                fi
+            done < "$rc_file" > "$tmp"
+            mv "$tmp" "$rc_file"
+        else
+            echo "SKILLS_REMOTES=\"${SKILLS_REMOTES}\"" >> "$rc_file"
+        fi
+    else
+        cat > "$rc_file" << EOF
+# .skillsrc — per-repo configuration for \`skills\`
+SKILLS_REMOTES="${SKILLS_REMOTES}"
+EOF
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Prompt assembly (moved from identity prompt)
+# ---------------------------------------------------------------------------
+
+action_prompt() {
+    # Outputs the skills portion of the system prompt.
+    # Assembles: CLI knowledge, kernel skills, available skills list.
+    local skills_dir="${SKILLS_DIR:-}"
+    local kernel_dir="${SKILLS_KERNEL_DIR:-}"
+
+    local context=""
+
+    # 1. Skills CLI knowledge
+    context="## My skills system
+My skills are learned abilities that let me do specific things well. They are how I grow and become more capable over time. Each skill is a set of instructions I can follow to accomplish a particular type of task — like a recipe or a playbook. I can install new skills from GitHub or create my own, and they persist as part of me just like my memories. Skills are managed via \`skills\` (SKILLS_DIR is pre-set in my environment).
+
+Commands I can run:
+  skills                                    List all my installed skills
+  skills <query>                            Search installed + remote skills
+  skills show <name>                        Print a skill's full SKILL.md
+  skills install <name|owner/repo|url|path> Install a skill (by name from remotes, GitHub, or local path)
+  skills remove <name>                      Remove an installed skill
+  skills init [name]                        Scaffold a new skill
+  skills list-json                          List skills as JSON
+  skills promote <name>                     Promote a skill to my kernel (always loaded)
+  skills kernel                             Show kernel skills with token counts
+  skills remote                             List configured skill remotes
+  skills remote add <url|path>              Add a skill remote
+  skills remote remove <url|path>           Remove a skill remote
+
+  My kernel skills are always loaded into my context. Regular skills are listed in my context but only shown in full on-demand — I load them with \`skills show <name>\` when needed.  When the user asks me to use a skill and it is installed, then I read it with \`skills show <name>\` and follow its instructions. If it isn't installed or available I can research and try to find it or I can try to write a new skill (and should install a skill-author skill to make that easier)."
+
+    # 2. Kernel skills — full content from each SKILL.md in kernel/
+    local kernel_content=""
+    if [[ -d "$kernel_dir" ]]; then
+        local skill_dir
+        for skill_dir in "$kernel_dir"/*/; do
+            [[ -f "${skill_dir}SKILL.md" ]] || continue
+            local skill_body
+            skill_body=$(sed '/^---$/,/^---$/d' "${skill_dir}SKILL.md" | _process_skill_blocks)
+            if [[ -n "$skill_body" ]]; then
+                kernel_content="${kernel_content}
+${skill_body}"
+            fi
+        done
+    fi
+    if [[ -n "$kernel_content" ]]; then
+        context="$context
+$kernel_content"
+    fi
+
+    # 3. Other installed skills — summary list
+    local skills_summary=""
+    if [[ -d "$skills_dir" ]]; then
+        local skill_dir
+        for skill_dir in "$skills_dir"/*/; do
+            [[ -f "${skill_dir}SKILL.md" ]] || continue
+            local sname sdesc
+            sname=$(sed -n '/^---$/,/^---$/p' "${skill_dir}SKILL.md" | grep '^name:' | sed 's/^name:[[:space:]]*//' | sed "s/^[\"']\(.*\)[\"']$/\1/")
+            sdesc=$(sed -n '/^---$/,/^---$/p' "${skill_dir}SKILL.md" | grep '^description:' | sed 's/^description:[[:space:]]*//' | sed "s/^[\"']\(.*\)[\"']$/\1/")
+            [[ -z "$sname" ]] && sname=$(basename "$skill_dir")
+            skills_summary="${skills_summary}  - ${sname}: ${sdesc}
+"
+        done
+    fi
+    if [[ -n "$skills_summary" ]]; then
+        context="$context
+
+## Available skills (use \`skills show <name>\` to load)
+$skills_summary"
+    fi
+
+    printf '%s' "$context"
+}
+
+# ---------------------------------------------------------------------------
+# Usage
+# ---------------------------------------------------------------------------
+
+usage() {
+    cat <<'EOF'
+skills — Skills manager for shellm
+
+Usage:
+  skills                                    List installed skills (eligible only)
+  skills list                               List installed skills (eligible only)
+  skills list --all                         List all skills, including ineligible
+  skills list --format=prompt               List eligible skills in prompt format
+  skills search <query>                     Search installed + remote skills
+  skills install <name|owner/repo|url|path> Install a skill
+  skills remove <name>                      Remove an installed skill
+  skills show <name>                        Print a skill's full SKILL.md
+  skills show <name> --requires             Show parsed requirements only
+  skills check <name>                       Check if a skill's requirements are met
+  skills init [name]                        Scaffold a new skill in current dir
+  skills list-json                          List skills as JSON (for programmatic use)
+  skills promote <name>                     Promote a skill to the kernel
+  skills kernel                             Show kernel skills with token counts
+  skills prompt                             Print skills system prompt (for LLM context)
+  skills remote                             List configured remotes
+  skills remote add <url|path>              Add a skill remote
+  skills remote remove <url|path>           Remove a skill remote
+
+Options:
+  -a, --all          List all skills including those with unmet requirements
+  --format FORMAT    Output format: default or "prompt" (compact, for system prompts)
+  --requires         Show parsed requirements (with skills show)
+  --dir DIR          Use DIR as the skills directory (default: ./.skills)
+  --remotes REMOTES  Comma-separated list of remote skill sources
+  --project          Target project-level .skills/ instead of local
+  --force            Skip confirmation prompts
+  --name NAME        Skill name (for init)
+  --description DESC Skill description (for init)
+  -v, --verbose      Verbose/debug mode
+  -h, --help         Show help
+  --version          Show version
+
+Requirements:
+  Skills can declare requirements in SKILL.md frontmatter under metadata.shelllm:
+    requires:
+      env: ["VAR1", "VAR2"]       All env vars must be set
+      bins: ["curl", "jq"]        All binaries must exist on PATH
+      anyBins: ["gh", "hub"]      At least one must exist on PATH
+      os: ["darwin", "linux"]     Current OS must be in list
+
+  By default, `skills list` only shows skills whose requirements are met.
+  Use `skills check <name>` to diagnose specific requirements.
+
+Executable blocks:
+  Bash code blocks in SKILL.md can be executed at render time using
+  Quarto-inspired directives. Add directives as #| comments at the
+  top of a ```bash fenced block:
+
+    ```bash
+    #| eval: true
+    echo "runs at render time"
+    ```
+
+  Directives:
+    #| eval: true/false     Execute the block (default: false)
+    #| echo: true/false     Show source code in output (default: false)
+    #| stdout: true/false   Include stdout in output (default: true)
+    #| stderr: true/false   Include stderr in output (default: true)
+
+  Blocks without `#| eval: true` pass through unchanged (current behavior).
+  Evaluated blocks are processed by `skills show` and `skills prompt`.
+
+Environment:
+  SKILLS_DIR              Override skills directory (default: ./.skills)
+  SKILLSRC                Override .skillsrc location (default: ./.skillsrc)
+  SKILLS_REMOTES          Remote skill sources (comma-separated)
+  SKILLS_KERNEL_DIR       Kernel directory (always-loaded skills)
+  SKILLS_KERNEL_TOKEN_BUDGET  Token budget for kernel (default: 8000)
+  NO_COLOR                Disable color output
+EOF
+    exit 0
+}
+
+# ---------------------------------------------------------------------------
+# Argument parsing & dispatch
+# ---------------------------------------------------------------------------
+
+main() {
+    local action=""
+    local project=0
+    local force=0
+    local init_name=""
+    local init_desc=""
+    local show_all=0
+    local format=""
+    local show_requires=0
+    local -a _positional=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                usage
+                ;;
+            --version)
+                echo "skills $SKILLS_VERSION"
+                exit 0
+                ;;
+            -v|--verbose)
+                VERBOSE=1
+                shift
+                ;;
+            --dir)
+                SKILLS_DIR="${2:?--dir requires a path}"
+                shift 2
+                ;;
+            --project)
+                project=1
+                shift
+                ;;
+            --remotes)
+                SKILLS_REMOTES="${2:?--remotes requires a value}"
+                shift 2
+                ;;
+            -a|--all)
+                show_all=1
+                shift
+                ;;
+            --format)
+                format="${2:?--format requires a value}"
+                shift 2
+                ;;
+            --format=*)
+                format="${1#--format=}"
+                shift
+                ;;
+            --requires)
+                show_requires=1
+                shift
+                ;;
+            --force)
+                force=1
+                shift
+                ;;
+            --name)
+                init_name="${2:?--name requires a value}"
+                shift 2
+                ;;
+            --description)
+                init_desc="${2:?--description requires a value}"
+                shift 2
+                ;;
+            -*)
+                die "Unknown option: $1 (try skills --help)"
+                ;;
+            *)
+                # Collect positional args without breaking, so trailing flags are still parsed
+                _positional+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    # Subcommand-style dispatch (e.g. "skills show foo" instead of "skills --show foo")
+    if [[ -z "$action" && ${#_positional[@]} -gt 0 ]]; then
+        case "${_positional[0]}" in
+            list)      action="list";     _positional=("${_positional[@]:1}") ;;
+            search)    action="search";   _positional=("${_positional[@]:1}") ;;
+            list-json) action="list-json"; _positional=("${_positional[@]:1}") ;;
+            install)   action="install";  _positional=("${_positional[@]:1}") ;;
+            remove)    action="remove";   _positional=("${_positional[@]:1}") ;;
+            show)      action="show";     _positional=("${_positional[@]:1}") ;;
+            check)     action="check";    _positional=("${_positional[@]:1}") ;;
+            init)      action="init";     _positional=("${_positional[@]:1}") ;;
+            promote)   action="promote";  _positional=("${_positional[@]:1}") ;;
+            kernel)    action="kernel";   _positional=("${_positional[@]:1}") ;;
+            prompt)    action="prompt";   _positional=("${_positional[@]:1}") ;;
+            remote)    action="remote";   _positional=("${_positional[@]:1}") ;;
+        esac
+    fi
+
+    local remaining="${_positional[*]:-}"
+
+    case "$action" in
+        list)      action_list "$show_all" "$format" ;;
+        list-json) action_list_json ;;
+        prompt)    action_prompt ;;
+        kernel)    action_kernel ;;
+        remote)
+            local remote_sub="${_positional[0]:-list}"
+            local remote_arg="${_positional[*]:1}"
+            case "$remote_sub" in
+                list)   action_remote_list ;;
+                add)    action_remote_add "$remote_arg" ;;
+                remove) action_remote_remove "$remote_arg" ;;
+                *)      die "Unknown remote subcommand: $remote_sub (try: list, add, remove)" ;;
+            esac
+            ;;
+        install)
+            [[ -z "$remaining" ]] && die "install requires a source (owner/repo, URL, or path)"
+            action_install "$remaining" "$project"
+            ;;
+        remove)
+            [[ -z "$remaining" ]] && die "remove requires a skill name"
+            action_remove "$remaining" "$force"
+            ;;
+        show)
+            [[ -z "$remaining" ]] && die "show requires a skill name"
+            action_show "$remaining" "$show_requires"
+            ;;
+        check)
+            [[ -z "$remaining" ]] && die "check requires a skill name"
+            action_check "$remaining"
+            ;;
+        promote)
+            [[ -z "$remaining" ]] && die "promote requires a skill name"
+            action_promote "$remaining"
+            ;;
+        search)
+            [[ -z "$remaining" ]] && die "search requires a query"
+            action_search "$remaining"
+            ;;
+        init)
+            [[ -z "$init_name" && -n "$remaining" ]] && init_name="$remaining"
+            action_init "$init_name" "$init_desc" "$project"
+            ;;
+        "")
+            if [[ -n "$remaining" ]]; then
+                action_search "$remaining"
+            else
+                action_list "$show_all" "$format"
+            fi
+            ;;
+    esac
+}
+
+main "$@"

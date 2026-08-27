@@ -1,0 +1,297 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# chat — Send and receive messages on an activated identity's trajectory
+# Reads TRAJ_DIR + TRAJ_ID from environment (set by `identity shell`).
+# Always appends to the root trajectory (ROOT_TRAJ_ID), even when called
+# from a forked sub-trajectory (e.g. inside an actor step).
+#
+# Config file: $CHATRC (default: ./.chatrc)
+#   default_send_from=<name>   Default --from for `chat send`
+
+die() { printf 'chat: error: %s\n' "$*" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Config file (.chatrc)
+# ---------------------------------------------------------------------------
+
+CHATRC="${CHATRC:-./.chatrc}"
+
+# Read a key from the chatrc file. Returns empty string if not found.
+# Surrounding whitespace is trimmed to match the web server's parsing
+# (_chatrc_default_from in web/src/headlong_web/server.py).
+_chatrc_get() {
+    local key="$1" value
+    [[ -f "$CHATRC" ]] || return 0
+    value="$(grep "^${key}=" "$CHATRC" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s' "$value"
+}
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+# Append to the root trajectory, not the current (possibly forked) one
+_chat_append() {
+    traj append "${ROOT_TRAJ_ID:-$TRAJ_ID}" >/dev/null
+}
+
+# Handle --help before env var check
+case "${1:-}" in -h|--help|help) ;; *)
+    [[ -n "${TRAJ_DIR:-}" ]] || die "TRAJ_DIR not set. Run: identity shell <name>"
+    [[ -n "${TRAJ_ID:-}" ]] || die "TRAJ_ID not set. Run: identity shell <name>"
+    ;; esac
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+# Default --from from .chatrc; require --to (pre-filled from IDENTITY_NAME).
+# Reads/writes the caller's `from` and `to` locals via dynamic scoping.
+_resolve_from_to() {
+    if [[ -z "$from" ]]; then
+        from=$(_chatrc_get "default_send_from")
+        if [[ -z "$from" ]]; then
+            die "No --from specified and no default_send_from in $CHATRC.
+Create a .chatrc file with:
+  mkdir -p \$(dirname $CHATRC) && echo 'default_send_from=your-name' > $CHATRC"
+        fi
+    fi
+    if [[ -z "$to" ]]; then
+        die "No --to specified and IDENTITY_NAME not set."
+    fi
+}
+
+cmd_send() {
+    local message="" from="" to="${IDENTITY_NAME:-}"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from) from="${2:?--from requires a name}"; shift 2 ;;
+            --to)   to="${2:?--to requires a name}"; shift 2 ;;
+            *)      message="${message:+$message }$1"; shift ;;
+        esac
+    done
+
+    # Read from stdin if no args and stdin is piped
+    if [[ -z "$message" && ! -t 0 ]]; then
+        message=$(cat)
+    fi
+    [[ -z "$message" ]] && die "No message provided. Usage: chat send [--from <name>] [--to <name>] <message>"
+
+    _resolve_from_to
+
+    # A self-addressed message re-triggers the identity's own message
+    # subscriptions, which can loop it into replying to itself forever.
+    # `chat send` with no --to targets the identity, so an agent using it to
+    # 'send' ends up messaging itself — the correct tool is `chat reply`.
+    [[ "$from" == "$to" ]] && die "refusing to send a message from '$from' to itself.
+To message someone else: chat reply <their-name> <message>
+To keep a note for yourself, append a thought step instead of a message."
+
+    # Append message step to trajectory
+    printf '{"type":"message","content":%s,"from":%s,"to":%s,"source":"chat"}' \
+        "$(printf '%s' "$message" | jq -Rsa .)" \
+        "$(printf '%s' "$from" | jq -Rsa .)" \
+        "$(printf '%s' "$to" | jq -Rsa .)" \
+        | _chat_append
+
+    printf 'Message sent.\n' >&2
+}
+
+cmd_reply() {
+    local reply_to=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --reply-to) reply_to="${2:?--reply-to requires a step id}"; shift 2 ;;
+            *) break ;;
+        esac
+    done
+    local to_name="${1:-}"
+    [[ -z "$to_name" ]] && die "Usage: chat reply [--reply-to <step_id>] <to_name> [message]"
+    shift
+
+    local message=""
+    while [[ $# -gt 0 ]]; do
+        message="${message:+$message }$1"; shift
+    done
+    if [[ -z "$message" && ! -t 0 ]]; then
+        message=$(cat)
+    fi
+    [[ -z "$message" ]] && die "No message provided. Usage: chat reply <to_name> <message>"
+
+    local from="${IDENTITY_NAME:-}"
+    [[ -z "$from" ]] && die "IDENTITY_NAME not set. Run: identity shell <name>"
+
+    # Replying to yourself loops your own message subscriptions (see cmd_send).
+    [[ "$to_name" == "$from" ]] && die "refusing to reply to yourself ('$from').
+Use the name of the person you mean to reach: chat reply <their-name> <message>"
+
+    # A reply answers something. When the caller doesn't say what (--reply-to),
+    # infer it: the latest message FROM the recipient TO us that no stamped
+    # reply has answered yet. Stamping here, at the transport, keeps "has this
+    # message been answered" a fact in the log no matter which path (or model)
+    # sent the reply. A reply that answers nothing (every inbound already
+    # answered) stays unstamped.
+    if [[ -z "$reply_to" ]]; then
+        reply_to=$(timeout 10 traj cat "${ROOT_TRAJ_ID:-$TRAJ_ID}" --raw 2>/dev/null \
+            | timeout 10 jq -Rrn --arg me "$from" --arg them "$to_name" '
+                [inputs | fromjson? // empty] as $steps
+                | [$steps[] | select(.type == "message" and .from == $me
+                                     and (.reply_to // "") != "") | .reply_to] as $answered
+                | [$steps[]
+                   | select(.type == "message" and .from == $them and .to == $me)
+                   | .step_id // "" | select(. != "")
+                   | select(. as $id | $answered | index($id) | not)]
+                | last // ""' 2>/dev/null) || reply_to=""
+    fi
+
+    # Answered guard: if a reply from us stamped to this step is already in
+    # the log, don't send another. Several thinkers subscribe to message
+    # steps, so concurrent wakes for one inbound can each try to answer it
+    # (2026-08-17: one "you there?" got three replies). First send wins;
+    # bounded to the recent log — duplicates happen within seconds.
+    if [[ -n "$reply_to" ]]; then
+        local _guard_tf _dup
+        _guard_tf=$(traj path "${ROOT_TRAJ_ID:-$TRAJ_ID}" 2>/dev/null) || _guard_tf=""
+        if [[ -n "$_guard_tf" && -f "$_guard_tf" ]]; then
+            _dup=$(tail -n 2000 -- "$_guard_tf" 2>/dev/null \
+                | jq -Rr --arg me "$from" --arg rt "$reply_to" \
+                    'fromjson? // empty
+                     | select(.type == "message" and .from == $me
+                              and (.reply_to // "") == $rt)
+                     | .step_id // "answered"' 2>/dev/null | head -1) || _dup=""
+            if [[ -n "$_dup" ]]; then
+                printf 'chat: step %s already has a reply from %s — skipping duplicate send.\n' \
+                    "$reply_to" "$from" >&2
+                return 0
+            fi
+        fi
+    fi
+
+    # reply_to stamps which message step this reply answers, making "has this
+    # message been answered" a fact in the log rather than an ordering
+    # heuristic. Additive — readers that don't know it ignore it.
+    jq -nc \
+        --arg content "$message" \
+        --arg from "$from" \
+        --arg to "$to_name" \
+        --arg reply_to "$reply_to" \
+        '{type:"message", content:$content, from:$from, to:$to, source:"chat"}
+         + (if $reply_to == "" then {} else {reply_to:$reply_to} end)' \
+        | _chat_append
+
+    printf 'Reply sent.\n' >&2
+}
+
+cmd_send_file() {
+    local from="" to="${IDENTITY_NAME:-}" filepath=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from) from="${2:?--from requires a name}"; shift 2 ;;
+            --to)   to="${2:?--to requires a name}"; shift 2 ;;
+            *)      filepath="$1"; shift ;;
+        esac
+    done
+    [[ -z "$filepath" ]] && die "Usage: chat send-file [--from <name>] [--to <name>] <filename>"
+    [[ -f "$filepath" ]] || die "File not found: $filepath"
+
+    _resolve_from_to
+
+    local filename
+    filename=$(basename "$filepath")
+    local content
+    content=$(cat "$filepath")
+
+    printf '{"type":"message","filename":%s,"content":%s,"from":%s,"to":%s,"source":"chat"}' \
+        "$(printf '%s' "$filename" | jq -Rsa .)" \
+        "$(printf '%s' "$content" | jq -Rsa .)" \
+        "$(printf '%s' "$from" | jq -Rsa .)" \
+        "$(printf '%s' "$to" | jq -Rsa .)" \
+        | _chat_append
+
+    printf 'File sent: %s\n' "$filename" >&2
+}
+
+cmd_history() {
+    local n=20
+    [[ -n "${1:-}" ]] && n="$1"
+
+    local identity_name="${IDENTITY_NAME:-agent}"
+
+    # Support both new "message" type and legacy "human-msg"/"agent-msg" types
+    traj cat "${ROOT_TRAJ_ID:-$TRAJ_ID}" --filter type=message,human-msg,agent-msg --raw 2>/dev/null \
+    | tail -n "$n" \
+    | while IFS= read -r line; do
+        local step_type content msg_from msg_to
+        step_type=$(printf '%s' "$line" | jq -r '.type // empty' 2>/dev/null)
+        content=$(printf '%s' "$line" | jq -r '.content // empty' 2>/dev/null)
+        [[ -z "$content" ]] && continue
+        case "$step_type" in
+            message)
+                msg_from=$(printf '%s' "$line" | jq -r '.from // "unknown"' 2>/dev/null)
+                msg_to=$(printf '%s' "$line" | jq -r '.to // empty' 2>/dev/null)
+                printf '%s → %s: %s\n' "$msg_from" "${msg_to:-?}" "$content"
+                ;;
+            human-msg)
+                msg_from=$(printf '%s' "$line" | jq -r '.from // empty' 2>/dev/null)
+                printf '%s: %s\n' "${msg_from:-you}" "$content"
+                ;;
+            agent-msg)
+                printf '%s: %s\n' "$identity_name" "$content"
+                ;;
+        esac
+    done
+}
+
+cmd_repl() {
+    # Prefer the renamed TUI binary; fall back to a pre-rename build.
+    if command -v headlong-tui >/dev/null 2>&1; then
+        exec headlong-tui "$@"
+    fi
+    exec shellm-tui "$@"
+}
+
+usage() {
+    cat <<'EOF'
+chat — Messaging for an activated identity
+
+Usage:
+  chat send [--from <name>] [--to <name>] <message>
+                             Send a message (from defaults to .chatrc
+                             default_send_from, to defaults to $IDENTITY_NAME)
+  chat send-file [--from <name>] [--to <name>] <file>
+                             Send a file's contents as a message
+  chat reply [--reply-to <step_id>] <to_name> <message>
+                             Agent sends a reply (from is $IDENTITY_NAME).
+                             Stamps reply_to with the step it answers —
+                             inferred (latest unanswered message from
+                             <to_name>) unless --reply-to overrides.
+  chat history [N]           Show last N messages (default 20)
+  chat repl                  Interactive chat (shows agent replies inline)
+
+Config file ($CHATRC, default ./.chatrc):
+  default_send_from=<name>   Default --from for `chat send`
+
+Environment:
+  CHATRC          Path to config file (default: ./.chatrc)
+  TRAJ_DIR        Trajectory directory (set by `identity shell`)
+  TRAJ_ID         Trajectory ID (set by `identity shell`)
+  IDENTITY_NAME   Identity name (for reply attribution and --to default)
+  IDENTITY_DIR    Identity directory (for repl history)
+EOF
+    exit 0
+}
+
+# Dispatch
+case "${1:-}" in
+    send)      shift; cmd_send "$@" ;;
+    send-file) shift; cmd_send_file "$@" ;;
+    reply)     shift; cmd_reply "$@" ;;
+    history) shift; cmd_history "$@" ;;
+    repl)    shift; cmd_repl "$@" ;;
+    -h|--help|help) usage ;;
+    "")     usage ;;
+    *)      die "Unknown command: $1 (try chat --help)" ;;
+esac

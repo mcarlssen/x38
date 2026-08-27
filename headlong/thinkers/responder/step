@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# responder/step — Immediate chat reply thinker.
+#
+# Fires on every inbound message: composes and sends a reply with a single
+# llm call + `chat reply`. No shellm agentic loop, no tools — lowest
+# possible latency. Idempotency comes from the reply itself (the reply_to
+# stamp), from our decision observations, and from a reply_claim only
+# while it is FRESH — a stale claim (crashed or failed send) deliberately
+# never blocks the retry on redelivery. See the predicate below.
+
+THINKER_NAME="responder"
+SCRIPT_DIR="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
+
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/../_lib/common.sh"
+
+_require_env
+
+THINK_MODEL="${THINK_MODEL:-${SHELLM_MODEL:-claude-opus-4-7}}"
+THINK_CONTEXT_TAIL="${THINK_CONTEXT_TAIL:-20}"
+REPLY_MODEL="${MONOLITH_REPLY_MODEL:-$THINK_MODEL}"
+
+# Read the triggering step from stdin.
+step_json=$(cat)
+[[ -z "$step_json" ]] && exit 0
+trigger_type=$(printf '%s' "$step_json" | jq -r '.type // empty' 2>/dev/null) || true
+trigger_content=$(printf '%s' "$step_json" | jq -r '.content // empty' 2>/dev/null) || true
+trigger_step_id=$(printf '%s' "$step_json" | jq -r '.step_id // empty' 2>/dev/null) || true
+
+[[ "$trigger_type" == "message" ]] || exit 0
+
+msg_to=$(printf '%s' "$step_json" | jq -r '.to // empty' 2>/dev/null) || true
+msg_from=$(printf '%s' "$step_json" | jq -r '.from // "human"' 2>/dev/null) || true
+
+# Only reply to messages addressed to this identity.
+[[ "$msg_to" == "$IDENTITY_NAME" ]] || exit 0
+
+# Append an observation step crediting this thinker, tagged with the
+# trigger step when known. $1 = content, $2 (optional) = decision field.
+_obs() {
+    jq -nc --arg content "$1" --arg source "$THINKER_NAME" \
+        --arg trigger "$trigger_step_id" --arg decision "${2:-}" \
+        '{type:"observation", content:$content, source:$source}
+         + (if $decision == "" then {} else {decision: $decision} end)
+         + (if $trigger == "" then {} else {trigger_step: $trigger} end)' \
+        | traj append >/dev/null || true
+}
+
+# Self-message guard: replying would create a self-chat loop.
+if [[ "$msg_from" == "$IDENTITY_NAME" ]]; then
+    printf '  self-message — dropping with observation\n' >&2
+    _obs "self-message dropped: you chat-sent a message to yourself and it will not be replied to (replying would loop). To message someone else use: chat reply <their-name> <message>. To keep a note for later, write it as a thought step instead. Your message was: $(printf '%.200s' "$trigger_content")"
+    exit 0
+fi
+
+[[ -z "$trigger_content" ]] && exit 0
+
+# Idempotency, three layers keyed on the trigger step:
+#   1. a stamped reply from us — definitively handled;
+#   2. our own decision observation ("replied" or "no-reply") — makes a
+#      deliberate NO_REPLY stick across redelivery instead of re-composing
+#      (and possibly answering) a message the mind chose to leave alone;
+#   3. a FRESH reply_claim (< CLAIM_TTL seconds) — another responder is
+#      composing right now (orphan-dispatcher double-dispatch delivers the
+#      same step twice); without this the race window is the whole compose.
+# A STALE bare claim deliberately does NOT count: that is the crashed/failed
+# send, and treating it as handled is how messages used to drop forever.
+# chat reply's answered guard backstops whatever slips through all three.
+CLAIM_TTL="${RESPONDER_CLAIM_TTL:-180}"
+if [[ -n "$trigger_step_id" ]]; then
+    # traj stamps ts in UTC ("%Y-%m-%dT%H:%M:%S.mmmZ", see _iso_ts), so the
+    # cutoff MUST be UTC too — a local-clock cutoff skews the freshness
+    # window by the whole UTC offset on any non-UTC host. Bare-seconds UTC
+    # compares correctly against the stamped form lexicographically. Empty
+    # cutoff (date variant unsupported) fails open: claims count as stale,
+    # a retry is safer than a dropped message.
+    claim_cutoff=$(date -u -v-"${CLAIM_TTL}"S +%Y-%m-%dT%H:%M:%S 2>/dev/null \
+        || date -u -d "${CLAIM_TTL} seconds ago" +%Y-%m-%dT%H:%M:%S 2>/dev/null) || claim_cutoff=""
+    already=$(_responder_already_handled "$trigger_step_id" "$msg_from" "$claim_cutoff") || already=""
+    if [[ -n "$already" ]]; then
+        printf '  already handled step %s (reply/decision/live claim) — skipping\n' "$trigger_step_id" >&2
+        exit 0
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Claim: an audit-trail step recording that this responder began handling
+# the message. NOT consulted for idempotency (see header) — the monolith no
+# longer subscribes to message steps, and a bare claim must never suppress
+# a retry after a failed send.
+# ---------------------------------------------------------------------------
+printf '  claiming reply to %s...\n' "$msg_from" >&2
+jq -nc \
+    --arg source "$THINKER_NAME" \
+    --arg trigger "$trigger_step_id" \
+    --arg from "$msg_from" \
+    '{type:"reply_claim", content:("handling reply to " + $from), source:$source}
+     + (if $trigger == "" then {} else {trigger_step: $trigger} end)' \
+    | traj append >/dev/null || true
+
+# ---------------------------------------------------------------------------
+# Compose and send the reply
+# ---------------------------------------------------------------------------
+system_prompt=$(_build_system_prompt)
+recent_context=""
+if traj exists 2>/dev/null; then
+    recent_context=$(_recent_stream "$THINK_CONTEXT_TAIL") || recent_context=""
+fi
+
+convo_json=$(printf '%s\n' "$recent_context" | jq -cRn \
+    --arg me "$IDENTITY_NAME" --arg them "$msg_from" '
+    [inputs | fromjson? // empty
+     | select(.type == "message")
+     | if .from == $them and .to == $me then {role:"user", content:(.content|tostring)}
+       elif .from == $me and .to == $them then {role:"assistant", content:(.content|tostring)}
+       else empty end]
+    | .[-12:]' 2>/dev/null) || convo_json="[]"
+convo_json=$(printf '%s' "$convo_json" | jq -c --arg c "$trigger_content" '
+    (if length == 0 or .[-1].role != "user" then . + [{role:"user", content:$c}] else . end)
+    | (if (.[0].role // "user") == "assistant" then .[1:] else . end)')
+
+inner_context=$(printf '%s\n' "$recent_context" | jq -Rr \
+    'fromjson? // empty | select(.type != "message")
+     | "[\(.type)] \(.content|tostring)"' 2>/dev/null | tail -n 8) || inner_context=""
+
+reply_system="$system_prompt
+
+You are in a live chat conversation with $msg_from. The messages are the real
+back-and-forth so far; reply to their newest message — first person, natural,
+conversational, concise. Never repeat or rephrase an earlier reply of yours.
+Answer completely from what you already know; only if it genuinely requires
+running tools or looking something up should you instead briefly say you're on
+it (the work happens separately) — in that case do not guess.
+
+Not every message needs a reply. If their newest message is already answered
+(a reply of yours addressing it is visible above), is a bare acknowledgment
+like \"thanks\" or \"ok\", or anything you could say would only repeat you,
+output exactly NO_REPLY on its own line and nothing else. Staying quiet is
+better than a duplicate or a contentless reply.
+
+Your recent inner life (context only, not part of the conversation):
+$inner_context
+
+Output ONLY the reply message text — no preamble, no quotes, no commands.
+Delivery is automatic: never write 'chat reply' or the recipient's address."
+
+printf '  replying to %s...\n' "$msg_from" >&2
+reply=$(llm -m "$REPLY_MODEL" -M "$convo_json" -s "$reply_system") || true
+
+# Strip a leaked delivery command if a model echoes one.
+reply=$(printf '%s' "$reply" | sed -E '1s/^[[:space:]]*chat reply [A-Za-z0-9._-]+[[:space:]]*//')
+
+# The model may judge that no reply is needed.
+first_line=$(printf '%s' "$reply" | head -n 1 | sed -E 's/^[[:space:]]+//;s/[[:space:]]+$//')
+if [[ "$first_line" == "NO_REPLY" ]]; then
+    printf '  model declined to reply (NO_REPLY)\n' >&2
+    _obs "Chose not to reply to $msg_from — their message needed no reply (already answered, or a bare acknowledgment). Their message was: $(printf '%.200s' "$trigger_content")" no-reply
+    exit 0
+fi
+
+reply_args=()
+[[ -n "$trigger_step_id" ]] && reply_args+=(--reply-to "$trigger_step_id")
+if [[ -n "$reply" ]] && printf '%s' "$reply" | chat reply ${reply_args[@]+"${reply_args[@]}"} "$msg_from"; then
+    _obs "Replied to $msg_from: $(printf '%.200s' "$reply")" replied
+    printf '  [reply -> %s] %s\n' "$msg_from" "$(printf '%s' "$reply" | head -1)"
+    exit 0
+fi
+
+# Reply failed — surface it so the monolith can pick it up.
+printf '  reply failed — appending failure observation\n' >&2
+_obs "reply failed: could not send a reply to $msg_from (empty model output or chat error — see responder log). Their message was: $(printf '%.200s' "$trigger_content")" reply-failed
